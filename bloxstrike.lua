@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "2.0.2",
+    Version   = "2.1",
 }
 
 local env = _G
@@ -31,6 +31,7 @@ local hasDrawing = type(Drawing) == "table" and type(Drawing.new) == "function"
 local Players           = cloneref(game:GetService("Players"))
 local RunService        = cloneref(game:GetService("RunService"))
 local UIS               = cloneref(game:GetService("UserInputService"))
+local CAS               = cloneref(game:GetService("ContextActionService"))
 local VIM               = cloneref(game:GetService("VirtualInputManager"))
 local TweenService      = cloneref(game:GetService("TweenService"))
 local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
@@ -52,6 +53,7 @@ local S = {
     colorStatic = Color3.fromRGB(235, 235, 245),
     colorHidden = Color3.fromRGB(195, 195, 210),
     bhop = false,
+    unanchor = false,
     noAirSpread = false,
     fovEnabled = false,
     fovValue = 90,
@@ -101,7 +103,6 @@ local function rootOf(char)
         or char.PrimaryPart
 end
 
--- гуманоид ищем и в глубине, а не только среди прямых детей
 local function humOf(char)
     if not char then return nil end
     local h = char:FindFirstChild("Humanoid")
@@ -1354,42 +1355,88 @@ task.spawn(function()
 end)
 
 --==============================================================
---  АВТОБХОП
+--  ПРЫЖОК
 --==============================================================
 local lastJump = 0
 local jumpCount = 0
 local lastState = "-"
-local pressBusy = false
+local pendingJump = 0
+local jumpY = 0
+local riseMax = 0
+local failCount = 0
+local firedConns = 0
 local hop = { active = false, start = 0, dur = 0.45, height = 5.5, lastOffset = 0, root = nil }
 
-local function realState(hum)
-    selfRead = true
-    local ok, st = pcall(function() return hum:GetState() end)
-    selfRead = false
-    if ok then return st end
-    return nil
+local fakeInput = {
+    KeyCode = Enum.KeyCode.Space,
+    UserInputType = Enum.UserInputType.Keyboard,
+    KeyState = Enum.UserInputState.Begin,
+    Position = Vector3.zero,
+}
+fakeInput.IsA = function() return false end
+
+-- прямой вызов обработчиков игры
+local function fireConnections(state)
+    if typeof(getconnections) ~= "function" then return 0 end
+    local ok, conns = pcall(getconnections, UIS.InputBegan)
+    if not ok or type(conns) ~= "table" then return 0 end
+    fakeInput.KeyState = state
+    local n = 0
+    for _, c in ipairs(conns) do
+        local f = c.Function
+        if type(f) == "function" then
+            pcall(f, fakeInput, false)
+            n += 1
+        end
+    end
+    return n
 end
 
-local function pressSpace()
-    if pressBusy then return end
-    pressBusy = true
+-- экшены ContextActionService, привязанные к пробелу
+local function fireActions()
+    local ok, info = pcall(function() return CAS:GetAllBoundActionInfo() end)
+    if not ok or type(info) ~= "table" then return 0 end
+    local n = 0
+    for name, data in pairs(info) do
+        local types = type(data) == "table" and data.inputTypes
+        if type(types) == "table" then
+            for _, io in ipairs(types) do
+                if io.KeyCode == Enum.KeyCode.Space then
+                    pcall(function() CAS:CallAction(name, Enum.UserInputState.Begin, io) end)
+                    pcall(function() CAS:CallAction(name, Enum.UserInputState.End, io) end)
+                    n += 1
+                    break
+                end
+            end
+        end
+    end
+    return n
+end
 
-    local sent = false
+local function fireKey()
     if typeof(keypress) == "function" then
-        sent = pcall(keypress, Enum.KeyCode.Space, 0.06)
+        pcall(keypress, Enum.KeyCode.Space, 0.05)
+        return
     end
-    if not sent and typeof(keydown) == "function" and typeof(keyup) == "function" then
+    if typeof(keydown) == "function" and typeof(keyup) == "function" then
         pcall(keydown, Enum.KeyCode.Space)
-        task.delay(0.06, function() pcall(keyup, Enum.KeyCode.Space) end)
-        sent = true
+        task.delay(0.05, function() pcall(keyup, Enum.KeyCode.Space) end)
+        return
     end
-    if not sent then
-        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false) end)
-        task.delay(0.06, function()
-            pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false) end)
-        end)
+    pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false) end)
+    task.delay(0.05, function()
+        pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false) end)
+    end)
+end
+
+local function fireJump()
+    local n = fireConnections(Enum.UserInputState.Begin)
+    firedConns = n
+    if n == 0 then
+        n = fireActions()
+        firedConns = n
     end
-    task.delay(0.08, function() pressBusy = false end)
+    fireKey()
 end
 
 local function hopStep(now)
@@ -1431,34 +1478,56 @@ track(RunService.RenderStepped:Connect(function()
 
     if hum then
         if hum.Health <= 0 then lastState = "dead" return end
-        local st = realState(hum)
+        local st
+        selfRead = true
+        local ok, s = pcall(function() return hum:GetState() end)
+        selfRead = false
+        if ok then st = s end
         lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
         if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then return end
     else
         lastState = "no hum"
-        if hop.active then return end
     end
 
-    if now - lastJump < 0.06 then return end
+    -- оценка предыдущей попытки
+    if pendingJump > 0 then
+        local dy = root.Position.Y - jumpY
+        if dy > riseMax then riseMax = dy end
+        if now - pendingJump > 0.3 then
+            pendingJump = 0
+            if riseMax < 0.5 then
+                failCount += 1
+                if S.unanchor then
+                    if root.Anchored then
+                        pcall(function() root.Anchored = false end)
+                    end
+                    pcall(function()
+                        root.AssemblyLinearVelocity = Vector3.new(0, 60, 0)
+                    end)
+                else
+                    hop.active = true
+                    hop.start = now
+                    hop.lastOffset = 0
+                    hop.root = root
+                end
+            else
+                failCount = 0
+            end
+        end
+    end
+
+    if now - lastJump < 0.18 then return end
+
     lastJump = now
+    jumpY = root.Position.Y
+    riseMax = 0
+    pendingJump = now
     jumpCount += 1
 
     if hum then
         pcall(function() hum.Jump = true end)
     end
-    pressSpace()
-
-    if not hum then
-        hop.active = true
-        hop.start = now
-        hop.lastOffset = 0
-        hop.root = root
-    elseif not root.Anchored then
-        pcall(function()
-            local v = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 55), v.Z)
-        end)
-    end
+    fireJump()
 end))
 
 --==============================================================
@@ -1691,21 +1760,18 @@ end)
 --==============================================================
 local function diagnose()
     local out = {}
-    table.insert(out, "Drawing: " .. tostring(hasDrawing))
-    table.insert(out, "Целей: " .. tostring((function() local n = 0 for _ in pairs(targets) do n += 1 end return n end)()))
+    table.insert(out, "getconnections: " .. tostring(typeof(getconnections)))
+    table.insert(out, "InputBegan handlers: " .. tostring(firedConns))
     table.insert(out, "Мой персонаж: " .. tostring(myChar()))
     table.insert(out, "hum: " .. tostring(myHum()))
     table.insert(out, "state: " .. tostring(lastState))
-    table.insert(out, "Прыжков: " .. tostring(jumpCount))
-    local hum = myHum()
-    if hum then
-        table.insert(out, "hum state: " .. tostring(realState(hum)))
-        table.insert(out, "floor: " .. tostring(hum.FloorMaterial))
-        local root = hum.RootPart or rootOf(hum.Parent)
-        if root then
-            table.insert(out, "anchored: " .. tostring(root.Anchored))
-            table.insert(out, "y: " .. tostring(root.Position.Y))
-        end
+    table.insert(out, "rise: " .. string.format("%.2f", riseMax))
+    table.insert(out, "Прыжков: " .. tostring(jumpCount) .. " провалов: " .. tostring(failCount))
+    local ch = myChar()
+    local root = ch and rootOf(ch)
+    if root then
+        table.insert(out, "anchored: " .. tostring(root.Anchored))
+        table.insert(out, "y: " .. tostring(root.Position.Y))
     end
     local text = table.concat(out, "\n")
     print("[SleepScript] ДИАГНОСТИКА\n" .. text)
@@ -1800,6 +1866,7 @@ chips(visualPage, palItems, S.colorHidden, function(v) S.colorHidden = v end)
 
 section(movePage, "бхоп")
 toggle(movePage, "Автобхоп (держать пробел)", false, function(v) S.bhop = v end)
+toggle(movePage, "Отвязать корень (если не прыгает)", false, function(v) S.unanchor = v end)
 
 local dbgLabel = new("TextLabel", {
     Text = "—",
@@ -1822,10 +1889,8 @@ task.spawn(function()
             dbgLabel.Text = "бхоп выключен"
             continue
         end
-        local ch = myChar()
-        local h = humOf(ch)
-        dbgLabel.Text = string.format("hum:%s state:%s jumps:%d space:%s",
-            tostring(h ~= nil), lastState, jumpCount, tostring(UIS:IsKeyDown(Enum.KeyCode.Space)))
+        dbgLabel.Text = string.format("conn:%d state:%s rise:%.1f jumps:%d",
+            firedConns, lastState, riseMax, jumpCount)
     end
 end)
 
