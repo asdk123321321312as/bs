@@ -2,10 +2,9 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "2.0.1",
+    Version   = "2.0.2",
 }
 
--- окружение без прямого вызова getgenv
 local env = _G
 do
     local g = rawget(_G, "getgenv")
@@ -32,6 +31,7 @@ local hasDrawing = type(Drawing) == "table" and type(Drawing.new) == "function"
 local Players           = cloneref(game:GetService("Players"))
 local RunService        = cloneref(game:GetService("RunService"))
 local UIS               = cloneref(game:GetService("UserInputService"))
+local VIM               = cloneref(game:GetService("VirtualInputManager"))
 local TweenService      = cloneref(game:GetService("TweenService"))
 local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local Lighting          = cloneref(game:GetService("Lighting"))
@@ -101,6 +101,18 @@ local function rootOf(char)
         or char.PrimaryPart
 end
 
+-- гуманоид ищем и в глубине, а не только среди прямых детей
+local function humOf(char)
+    if not char then return nil end
+    local h = char:FindFirstChild("Humanoid")
+    if h and h:IsA("Humanoid") then return h end
+    h = char:FindFirstChildOfClass("Humanoid")
+    if h then return h end
+    h = char:FindFirstChild("Humanoid", true)
+    if h and h:IsA("Humanoid") then return h end
+    return nil
+end
+
 local function eachCandidate(cb)
     local folder = charsFolder()
     if folder then
@@ -113,7 +125,7 @@ local function eachCandidate(cb)
             local kids = c:GetChildren()
             if #kids <= 400 then
                 for _, m in ipairs(kids) do
-                    if m:IsA("Model") and (modelOwner[m] or m:FindFirstChildOfClass("Humanoid")) then
+                    if m:IsA("Model") and (modelOwner[m] or humOf(m)) then
                         cb(m)
                     end
                 end
@@ -226,8 +238,7 @@ local function myChar()
 end
 
 local function myHum()
-    local c = myChar()
-    return c and c:FindFirstChildOfClass("Humanoid") or nil
+    return humOf(myChar())
 end
 
 local function isDead(char)
@@ -235,7 +246,7 @@ local function isDead(char)
     if char:GetAttribute("Dead") == true then return true end
     local hp = tonumber(char:GetAttribute("Health"))
     if hp and hp <= 0 then return true end
-    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hum = humOf(char)
     if hum and hum.Health <= 0 then return true end
     return false
 end
@@ -1100,7 +1111,7 @@ local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
             or (camNow ~= nil and hit.Instance:IsDescendantOf(camNow)))
     end
 
-    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hum = humOf(char)
     local hp = hum and hum.Health or tonumber(char:GetAttribute("Health")) or 100
     local maxHp = hum and math.max(hum.MaxHealth, 1) or 100
     local frac = math.clamp(hp / maxHp, 0, 1)
@@ -1348,6 +1359,8 @@ end)
 local lastJump = 0
 local jumpCount = 0
 local lastState = "-"
+local pressBusy = false
+local hop = { active = false, start = 0, dur = 0.45, height = 5.5, lastOffset = 0, root = nil }
 
 local function realState(hum)
     selfRead = true
@@ -1357,8 +1370,54 @@ local function realState(hum)
     return nil
 end
 
+local function pressSpace()
+    if pressBusy then return end
+    pressBusy = true
+
+    local sent = false
+    if typeof(keypress) == "function" then
+        sent = pcall(keypress, Enum.KeyCode.Space, 0.06)
+    end
+    if not sent and typeof(keydown) == "function" and typeof(keyup) == "function" then
+        pcall(keydown, Enum.KeyCode.Space)
+        task.delay(0.06, function() pcall(keyup, Enum.KeyCode.Space) end)
+        sent = true
+    end
+    if not sent then
+        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false) end)
+        task.delay(0.06, function()
+            pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false) end)
+        end)
+    end
+    task.delay(0.08, function() pressBusy = false end)
+end
+
+local function hopStep(now)
+    if not hop.active then return end
+    local root = hop.root
+    if not root or not root.Parent then
+        hop.active = false
+        return
+    end
+    local t = math.clamp((now - hop.start) / hop.dur, 0, 1)
+    local want = hop.height * 4 * (t - t * t)
+    local dy = want - hop.lastOffset
+    hop.lastOffset = want
+    if dy ~= 0 then
+        pcall(function() root.CFrame = root.CFrame + Vector3.new(0, dy, 0) end)
+    end
+    if t >= 1 then hop.active = false end
+end
+
 track(RunService.RenderStepped:Connect(function()
-    if dead or not S.bhop then return end
+    if dead or not S.bhop then
+        hop.active = false
+        return
+    end
+
+    local now = os.clock()
+    hopStep(now)
+
     if not UIS:IsKeyDown(Enum.KeyCode.Space) then
         lastState = "no key"
         return
@@ -1366,21 +1425,40 @@ track(RunService.RenderStepped:Connect(function()
 
     local char = myChar()
     if not char then lastState = "no char" return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then lastState = "no hum" return end
+    local root = rootOf(char)
+    if not root then lastState = "no root" return end
+    local hum = humOf(char)
 
-    local st = realState(hum)
-    lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
-    if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
-        return
+    if hum then
+        if hum.Health <= 0 then lastState = "dead" return end
+        local st = realState(hum)
+        lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
+        if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then return end
+    else
+        lastState = "no hum"
+        if hop.active then return end
     end
 
-    local now = os.clock()
     if now - lastJump < 0.06 then return end
-
     lastJump = now
     jumpCount += 1
-    pcall(function() hum.Jump = true end)
+
+    if hum then
+        pcall(function() hum.Jump = true end)
+    end
+    pressSpace()
+
+    if not hum then
+        hop.active = true
+        hop.start = now
+        hop.lastOffset = 0
+        hop.root = root
+    elseif not root.Anchored then
+        pcall(function()
+            local v = root.AssemblyLinearVelocity
+            root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 55), v.Z)
+        end)
+    end
 end))
 
 --==============================================================
@@ -1616,6 +1694,7 @@ local function diagnose()
     table.insert(out, "Drawing: " .. tostring(hasDrawing))
     table.insert(out, "Целей: " .. tostring((function() local n = 0 for _ in pairs(targets) do n += 1 end return n end)()))
     table.insert(out, "Мой персонаж: " .. tostring(myChar()))
+    table.insert(out, "hum: " .. tostring(myHum()))
     table.insert(out, "state: " .. tostring(lastState))
     table.insert(out, "Прыжков: " .. tostring(jumpCount))
     local hum = myHum()
@@ -1632,6 +1711,23 @@ local function diagnose()
     print("[SleepScript] ДИАГНОСТИКА\n" .. text)
     if setclipboard then pcall(setclipboard, text) end
     notify("Диагностика скопирована")
+end
+
+local function dumpSelf()
+    local char = myChar()
+    if not char then notify("Персонаж не найден") return end
+    local out = { "char: " .. char.Name .. " [" .. char.ClassName .. "]", "humOf: " .. tostring(humOf(char)) }
+    for _, d in ipairs(char:GetDescendants()) do
+        local extra = ""
+        if d:IsA("BasePart") then
+            extra = string.format(" anch=%s trans=%.2f pos=%s", tostring(d.Anchored), d.Transparency, tostring(d.Position))
+        end
+        table.insert(out, ("%s [%s]%s"):format(d.Name, d.ClassName, extra))
+    end
+    local text = table.concat(out, "\n")
+    print("[SleepScript] ПЕРСОНАЖ\n" .. text)
+    if setclipboard then pcall(setclipboard, text) end
+    notify("Дамп персонажа скопирован")
 end
 
 local function dumpStructure()
@@ -1726,8 +1822,10 @@ task.spawn(function()
             dbgLabel.Text = "бхоп выключен"
             continue
         end
-        dbgLabel.Text = string.format("state:%s jumps:%d space:%s",
-            lastState, jumpCount, tostring(UIS:IsKeyDown(Enum.KeyCode.Space)))
+        local ch = myChar()
+        local h = humOf(ch)
+        dbgLabel.Text = string.format("hum:%s state:%s jumps:%d space:%s",
+            tostring(h ~= nil), lastState, jumpCount, tostring(UIS:IsKeyDown(Enum.KeyCode.Space)))
     end
 end)
 
@@ -1783,6 +1881,7 @@ end)
 
 section(miscPage, "служебное")
 button(miscPage, "Диагностика (F9)", diagnose)
+button(miscPage, "Дамп персонажа", dumpSelf)
 button(miscPage, "Дамп структуры", dumpStructure)
 button(miscPage, "Закрыть меню (Z)", function() closeMenu() end)
 button(miscPage, "Выгрузить скрипт", function()
