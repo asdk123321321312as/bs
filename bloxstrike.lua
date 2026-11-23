@@ -1,16 +1,9 @@
---!nocheck
---[[
-    SleepScript • Blox Strike
-    ---------------------------------------------------------------
-    ESP, автобхоп, no air spread, FOV, скинченджер ножей.
-    Меню: Z. Выгрузка: кнопка в меню или getgenv().SleepScript.Unload()
-]]
 
 local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "1.3",
+    Version   = "1.4",
 }
 
 if getgenv().SleepScript then pcall(function() getgenv().SleepScript.Unload() end) end
@@ -45,6 +38,7 @@ local S = {
     headDot = false,
     chams = false,
     outline = true,
+    smooth = true,
     teamCheck = true,
     showBots = true,
     showLocal = false,
@@ -55,7 +49,8 @@ local S = {
     colorTracer = Color3.fromRGB(140, 110, 255),
     colorMode = "static",
     bhop = false,
-    bhopAggro = false,
+    bhopForce = true,
+    bhopGround = true,
     bhopDelay = 0,
     noAirSpread = false,
     fovEnabled = false,
@@ -134,6 +129,13 @@ local function rootOf(char)
         or char:FindFirstChild("UpperTorso")
         or char:FindFirstChild("Torso")
         or char.PrimaryPart
+end
+
+local function feetOf(char)
+    if not char then return nil end
+    return char:FindFirstChild("LeftFoot") or char:FindFirstChild("RightFoot")
+        or char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("RightLowerLeg")
+        or char:FindFirstChild("Left Leg") or char:FindFirstChild("Right Leg")
 end
 
 local function teamOf(plr)
@@ -778,6 +780,8 @@ end
 local function hide(rec)
     rec.box.Filled = false
     for i = 1, #rec.all do rec.all[i].Visible = false end
+    rec.lastW = nil
+    rec.lastH = nil
 end
 
 local function bindPlayer(plr)
@@ -854,7 +858,7 @@ local function drawBox(rec, x, y, w, h, col)
 end
 
 local function drawSkeleton(rec, cam, char, hum, col)
-    local set = SKEL[hum and hum.RigType == Enum.HumanoidRigType.R6 and "R6" or "R15"]
+    local set = SKEL[(hum and hum.RigType == Enum.HumanoidRigType.R6) and "R6" or "R15"]
     local i = 0
     for _, pair in ipairs(set) do
         local a = char:FindFirstChild(pair[1])
@@ -888,16 +892,21 @@ end
 local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
     if not char or isDead(char) then hide(rec) return end
 
-    local ok, cf, size = pcall(function() return char:GetBoundingBox() end)
-    if not ok or not cf or size.Y < 0.5 then hide(rec) return end
-
     local root = rootOf(char)
-    local center = cf.Position
-    local dist = (camPos - center).Magnitude
+    local head = char:FindFirstChild("Head")
+    if not root then hide(rec) return end
+
+    local feet = feetOf(char)
+    local topPos = head
+        and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.4, 0))
+        or (root.Position + Vector3.new(0, 2.6, 0))
+    local botPos = feet
+        and (feet.Position - Vector3.new(0, feet.Size.Y * 0.5, 0))
+        or (root.Position - Vector3.new(0, 2.8, 0))
+
+    local dist = (camPos - root.Position).Magnitude
     if dist > S.maxDist then hide(rec) return end
 
-    local topPos = center + Vector3.new(0, size.Y / 2, 0)
-    local botPos = center - Vector3.new(0, size.Y / 2, 0)
     local sTop, onTop = cam:WorldToViewportPoint(topPos)
     local sBot, onBot = cam:WorldToViewportPoint(botPos)
     if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
@@ -905,16 +914,25 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
         return
     end
 
-    local h = sBot.Y - sTop.Y
-    local ratio = math.clamp(size.X / math.max(size.Y, 0.1), 0.28, 0.75)
-    local w = h * ratio
+    local rawH = sBot.Y - sTop.Y
+    local rawW = rawH * 0.42
+
+    if S.smooth and rec.lastH then
+        rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.45
+        rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.45
+    else
+        rec.lastH, rec.lastW = rawH, rawW
+    end
+
+    local h = math.max(rec.lastH, 2)
+    local w = math.max(rec.lastW, 2)
     local x = sTop.X - w / 2
     local y = sTop.Y
 
-    if not visClock[key] or now - visClock[key] > 0.12 then
+    if not visClock[key] or now - visClock[key] > 0.15 then
         visClock[key] = now
         rayParams.FilterDescendantsInstances = { char, my }
-        local hit = Workspace:Raycast(camPos, center - camPos, rayParams)
+        local hit = Workspace:Raycast(camPos, topPos - camPos, rayParams)
         visState[key] = (hit == nil or hit.Instance:IsDescendantOf(char))
     end
 
@@ -983,10 +1001,10 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
     end
 
     if S.headDot then
-        local hp2, on = cam:WorldToViewportPoint(topPos)
+        local p, on = cam:WorldToViewportPoint(topPos)
         if on then
-            rec.dot.Position = Vector2.new(hp2.X, hp2.Y)
-            rec.dot.Radius = math.clamp(h * 0.035, 2, 6)
+            rec.dot.Position = Vector2.new(p.X, p.Y)
+            rec.dot.Radius = math.clamp(h * 0.03, 2, 6)
             rec.dot.Color = col
             rec.dot.Visible = true
         else
@@ -1016,6 +1034,7 @@ local function frameUpdate()
     local now = os.clock()
     local my = resolveChar(lp)
     local myTeam = teamOf(lp)
+    local folder = charsFolder()
 
     for plr, entry in pairs(ESP.objects) do
         local rec = entry.rec
@@ -1027,10 +1046,11 @@ local function frameUpdate()
             hide(rec)
             continue
         end
-        drawTarget(rec, cam, camPos, cx, vp, resolveChar(plr), labelFor(plr), my, now, plr)
+        local char = resolveChar(plr)
+        if char and folder and char.Parent ~= folder then char = nil end
+        drawTarget(rec, cam, camPos, cx, vp, char, labelFor(plr), my, now, plr)
     end
 
-    local folder = charsFolder()
     if S.showBots and folder then
         local seen = {}
         for _, model in ipairs(folder:GetChildren()) do
@@ -1131,13 +1151,13 @@ local function myHum()
     return c and c:FindFirstChildOfClass("Humanoid") or nil
 end
 
-local function grounded(hum)
+local function onGround(hum)
+    local floor = hum.FloorMaterial
+    if floor and floor ~= Enum.Material.Air then return true end
     local root = hum.RootPart or rootOf(hum.Parent)
     if not root then return false end
-    local ignore = { hum.Parent, camera }
-    groundParams.FilterDescendantsInstances = ignore
-    local hit = Workspace:Raycast(root.Position, Vector3.new(0, -8, 0), groundParams)
-    return hit ~= nil
+    groundParams.FilterDescendantsInstances = { hum.Parent, camera }
+    return Workspace:Raycast(root.Position, Vector3.new(0, -12, 0), groundParams) ~= nil
 end
 
 local function pressSpace()
@@ -1150,23 +1170,22 @@ local function pressSpace()
     end)
 end
 
-local function jumpNow(hum)
-    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+local function doJump(hum)
+    local root = hum.RootPart or rootOf(hum.Parent)
+
     pcall(function() hum.Jump = true end)
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
     pressSpace()
 
-    if S.bhopAggro then
-        local root = hum.RootPart or rootOf(hum.Parent)
-        if root then
-            local power = hum.JumpPower
-            if not hum.UseJumpPower then
-                power = math.sqrt(2 * Workspace.Gravity * hum.JumpHeight)
-            end
-            if power and power > 0 then
-                local v = root.AssemblyLinearVelocity
-                if v.Y < power * 0.95 then
-                    root.AssemblyLinearVelocity = Vector3.new(v.X, power, v.Z)
-                end
+    if S.bhopForce and root then
+        local power = hum.JumpPower
+        if not hum.UseJumpPower then
+            power = math.sqrt(2 * Workspace.Gravity * hum.JumpHeight)
+        end
+        if power and power > 0 then
+            local v = root.AssemblyLinearVelocity
+            if v.Y < power * 0.9 then
+                root.AssemblyLinearVelocity = Vector3.new(v.X, power, v.Z)
             end
         end
     end
@@ -1178,25 +1197,19 @@ track(RunService.RenderStepped:Connect(function()
 
     local hum = myHum()
     if not hum or hum.Health <= 0 then return end
+    local root = hum.RootPart or rootOf(hum.Parent)
+    if not root then return end
 
-    selfRead = true
-    local ok, st = pcall(function() return hum:GetState() end)
-    selfRead = false
-    if ok and (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) then return end
+    local vy = root.AssemblyLinearVelocity.Y
+    if vy > 8 then return end
+
+    if S.bhopGround and not onGround(hum) then return end
 
     local now = os.clock()
-    local delay = 0.06 + (S.bhopDelay or 0) / 1000
-    if now - lastJump < delay then return end
-
-    if S.bhopAggro then
-        if not grounded(hum) then return end
-    else
-        local floor = hum.FloorMaterial
-        if floor == Enum.Material.Air and not grounded(hum) then return end
-    end
+    if now - lastJump < (0.05 + (S.bhopDelay or 0) / 1000) then return end
 
     lastJump = now
-    jumpNow(hum)
+    doJump(hum)
 end))
 
 --==============================================================
@@ -1381,21 +1394,15 @@ end
 local function installEngineHooks()
     if hookedEngine or typeof(hookfunction) ~= "function" then return end
 
-    pcall(function()
-        WeaponComponent = require(ReplicatedStorage.Classes.WeaponComponent)
-    end)
-    pcall(function()
-        SkinsLib = require(ReplicatedStorage.Database.Components.Libraries.Skins)
-    end)
-
+    pcall(function() WeaponComponent = require(ReplicatedStorage.Classes.WeaponComponent) end)
+    pcall(function() SkinsLib = require(ReplicatedStorage.Database.Components.Libraries.Skins) end)
     if not WeaponComponent or not SkinsLib then return end
 
     local ok1 = pcall(function()
         origWeaponNew = WeaponComponent.new
         WeaponComponent.new = function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, ...)
             if S.swapKnife and S.knife and p1 == lp and engineAlive() and isKnife(p5) then
-                local skin = S.skin or "Vanilla"
-                return origWeaponNew(p1, p2, p3, p4, S.knife, skin, 0.001, p8, p9, p10, p11, p12, ...)
+                return origWeaponNew(p1, p2, p3, p4, S.knife, S.skin or "Vanilla", 0.001, p8, p9, p10, p11, p12, ...)
             end
             return origWeaponNew(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, ...)
         end
@@ -1437,8 +1444,18 @@ local function diagnose()
     local out = {}
     table.insert(out, "Characters: " .. tostring(charsFolder()))
     table.insert(out, "Мой персонаж: " .. tostring(myChar()))
+    table.insert(out, "Мой hum: " .. tostring(myHum()))
     table.insert(out, "Команда: " .. tostring(teamOf(lp)))
     table.insert(out, "Resolver: " .. tostring(CharacterResolver))
+    table.insert(out, "VIM: " .. tostring(VIM))
+    local hum = myHum()
+    if hum then
+        table.insert(out, "floor: " .. tostring(hum.FloorMaterial))
+        table.insert(out, "state: " .. tostring(hum:GetState()))
+        local root = hum.RootPart or rootOf(hum.Parent)
+        table.insert(out, "root: " .. tostring(root))
+        if root then table.insert(out, "vy: " .. tostring(root.AssemblyLinearVelocity.Y)) end
+    end
     table.insert(out, "Assets: " .. tostring(Assets) .. " / Skins: " .. tostring(SkinsFolder))
     table.insert(out, "Ножей: " .. tostring(#knifeList()))
     local c = camera or Workspace.CurrentCamera
@@ -1484,6 +1501,7 @@ chips(visualPage, {
 slider(visualPage, "Толщина", 1, 4, 1, function(v) S.thickness = v end)
 slider(visualPage, "Размер уголков", 4, 24, 9, function(v) S.cornerSize = v end)
 toggle(visualPage, "Чёрная обводка", true, function(v) S.outline = v end)
+toggle(visualPage, "Сглаживание рамки", true, function(v) S.smooth = v end)
 
 section(visualPage, "ник")
 chips(visualPage, {
@@ -1541,8 +1559,44 @@ chips(visualPage, palItems, S.colorTracer, function(v) S.colorTracer = v end)
 
 section(movePage, "бхоп")
 toggle(movePage, "Автобхоп (держать пробел)", false, function(v) S.bhop = v end)
-toggle(movePage, "Агрессивный (импульс)", false, function(v) S.bhopAggro = v end)
-slider(movePage, "Задержка (мс)", 0, 120, 0, function(v) S.bhopDelay = v end)
+toggle(movePage, "Импульс (сила)", true, function(v) S.bhopForce = v end)
+toggle(movePage, "Только с земли", true, function(v) S.bhopGround = v end)
+slider(movePage, "Задержка (мс)", 0, 150, 0, function(v) S.bhopDelay = v end)
+
+local dbgLabel = new("TextLabel", {
+    Text = "—",
+    Font = Enum.Font.Code,
+    TextSize = 11,
+    TextColor3 = Color3.fromRGB(140, 140, 160),
+    BackgroundColor3 = Color3.fromRGB(13, 13, 18),
+    BorderSizePixel = 0,
+    Size = UDim2.new(1, 0, 0, 46),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true,
+}, movePage)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, dbgLabel)
+new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingTop = UDim.new(0, 4) }, dbgLabel)
+
+task.spawn(function()
+    while task.wait(0.15) do
+        if not S.bhop then
+            dbgLabel.Text = "бхоп выключен"
+            continue
+        end
+        local hum = myHum()
+        local root = hum and (hum.RootPart or rootOf(hum.Parent))
+        dbgLabel.Text = string.format(
+            "char:%s hum:%s floor:%s ground:%s vy:%.1f space:%s",
+            tostring(myChar() ~= nil),
+            tostring(hum ~= nil),
+            tostring(hum and hum.FloorMaterial),
+            tostring(hum and onGround(hum)),
+            root and root.AssemblyLinearVelocity.Y or 0,
+            tostring(UIS:IsKeyDown(Enum.KeyCode.Space))
+        )
+    end
+end)
 
 section(movePage, "точность")
 toggle(movePage, "Убрать разброс в полёте", false, function(v) S.noAirSpread = v end)
