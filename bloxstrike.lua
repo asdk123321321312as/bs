@@ -1,16 +1,10 @@
---!nocheck
---[[
-    SleepScript • Blox Strike
-    ---------------------------------------------------------------
-    ESP, автобхоп, no air spread, FOV, скинченджер ножей.
-    Меню: Z. Выгрузка: кнопка в меню или getgenv().SleepScript.Unload()
-]]
+
 
 local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "1.1",
+    Version   = "1.2",
 }
 
 if getgenv().SleepScript then pcall(function() getgenv().SleepScript.Unload() end) end
@@ -30,8 +24,6 @@ local Lighting          = cloneref(game:GetService("Lighting"))
 local Workspace         = cloneref(workspace)
 local lp                = Players.LocalPlayer
 
-local TEAMS = { "Terrorists", "Counter-Terrorists" }
-
 local S = {
     espEnabled = false,
     style = "corner",
@@ -43,9 +35,11 @@ local S = {
     hpMode = "bar",
     tracer = false,
     teamCheck = true,
+    showBots = true,
     maxDist = 500,
     colorStatic = Color3.fromRGB(235, 235, 245),
     colorHidden = Color3.fromRGB(150, 150, 165),
+    colorMode = "static",
     bhop = false,
     bhopAggro = false,
     noAirSpread = false,
@@ -53,7 +47,7 @@ local S = {
     fovValue = 90,
     knife = nil,
     skin = nil,
-    customKnife = false,
+    swapKnife = false,
     holdSkin = true,
 }
 
@@ -70,59 +64,41 @@ local function notify(text, dur)
 end
 
 --==============================================================
---  ПЕРСОНАЖИ (папка переразрешается каждый раз)
+--  ПЕРСОНАЖИ
 --==============================================================
-local Characters = nil
+local CharacterResolver
+pcall(function()
+    CharacterResolver = require(ReplicatedStorage.Components.Common.CharacterResolver)
+end)
 
-local function chars()
-    if Characters and Characters.Parent then return Characters end
-    Characters = Workspace:FindFirstChild("Characters")
-    return Characters
+local function charsFolder()
+    return Workspace:FindFirstChild("Characters")
 end
 
-local function teamOf(plr)
-    local attr = plr:GetAttribute("Team")
-    if typeof(attr) == "string" then
-        local low = string.lower(attr)
-        if string.find(low, "counter", 1, true) then return "CT" end
-        if string.find(low, "terror", 1, true) then return "T" end
-    end
-    local team = plr.Team
-    if typeof(team) == "Instance" then
-        local low = string.lower(team.Name)
-        if string.find(low, "counter", 1, true) then return "CT" end
-        if string.find(low, "terror", 1, true) then return "T" end
-    end
-    local c = chars()
-    if c then
-        for _, t in ipairs(TEAMS) do
-            local f = c:FindFirstChild(t)
-            if f and f:FindFirstChild(plr.Name) then
-                return (t == "Terrorists") and "T" or "CT"
-            end
-        end
-    end
-    return nil
-end
-
-local function getChar(plr)
+local function resolveChar(plr)
     if not plr then return nil end
-    local ch = plr.Character
-    if ch and ch.Parent and ch:FindFirstChildOfClass("Humanoid") then return ch end
-
-    local c = chars()
-    if c then
-        for _, t in ipairs(TEAMS) do
-            local f = c:FindFirstChild(t)
-            local m = f and f:FindFirstChild(plr.Name)
-            if m and m:FindFirstChildOfClass("Humanoid") then return m end
-        end
-        local direct = c:FindFirstChild(plr.Name)
-        if direct and direct:FindFirstChildOfClass("Humanoid") then return direct end
+    if CharacterResolver and CharacterResolver.getPlayerCharacter then
+        local ok, c = pcall(CharacterResolver.getPlayerCharacter, plr)
+        if ok and c and c.Parent then return c end
     end
-
-    if ch and ch.Parent then return ch end
+    local c = plr.Character
+    if c and c.Parent then return c end
+    local folder = charsFolder()
+    if folder then
+        local m = folder:FindFirstChild(plr.Name)
+        if m and m:IsA("Model") then return m end
+    end
     return nil
+end
+
+local function isDead(char)
+    if not char then return true end
+    if char:GetAttribute("Dead") == true then return true end
+    local hp = tonumber(char:GetAttribute("Health"))
+    if hp and hp <= 0 then return true end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health <= 0 then return true end
+    return false
 end
 
 local function rootOf(char)
@@ -131,6 +107,12 @@ local function rootOf(char)
         or char:FindFirstChild("UpperTorso")
         or char:FindFirstChild("Torso")
         or char.PrimaryPart
+end
+
+local function teamOf(plr)
+    local t = plr:GetAttribute("Team")
+    if typeof(t) == "string" then return t end
+    return nil
 end
 
 local groundParams = RaycastParams.new()
@@ -807,6 +789,90 @@ local function drawBox(rec, x, y, w, h, col)
     put(rec.corners[8], x + w - t, y + h - c, t, c, col)
 end
 
+-- отрисовка одной цели
+local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
+    if not char or isDead(char) then hide(rec) return end
+
+    local root = rootOf(char)
+    if not root then hide(rec) return end
+
+    local head = char:FindFirstChild("Head") or root
+    local dist = (camPos - root.Position).Magnitude
+    if dist > S.maxDist then hide(rec) return end
+
+    local sTop, onTop = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 1.1, 0))
+    local sBot, onBot = cam:WorldToViewportPoint(root.Position - Vector3.new(0, 3.1, 0))
+    if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
+        hide(rec)
+        return
+    end
+
+    local h = sBot.Y - sTop.Y
+    local w = h * 0.45
+    local x = sTop.X - w / 2
+    local y = sTop.Y
+
+    if not visClock[key] or now - visClock[key] > 0.12 then
+        visClock[key] = now
+        rayParams.FilterDescendantsInstances = { char, my }
+        local hit = Workspace:Raycast(camPos, head.Position - camPos, rayParams)
+        visState[key] = (hit == nil or hit.Instance:IsDescendantOf(char))
+    end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hpAttr = tonumber(char:GetAttribute("Health"))
+    local hp = hum and hum.Health or hpAttr or 100
+    local maxHp = hum and math.max(hum.MaxHealth, 1) or 100
+    local frac = math.clamp(hp / maxHp, 0, 1)
+
+    local col = colorFor(visState[key] ~= false, frac)
+    drawBox(rec, x, y, w, h, col)
+
+    if S.hpMode == "bar" then
+        rec.hpBg.Position = Vector2.new(x - 6, y)
+        rec.hpBg.Size = Vector2.new(3, h)
+        rec.hpBg.Color = Color3.fromRGB(20, 20, 26)
+        rec.hpBg.Visible = true
+        rec.hp.Position = Vector2.new(x - 6, y + h * (1 - frac))
+        rec.hp.Size = Vector2.new(3, h * frac)
+        rec.hp.Color = Color3.fromRGB(90, 220, 120):Lerp(Color3.fromRGB(230, 70, 70), 1 - frac)
+        rec.hp.Visible = true
+    else
+        rec.hpBg.Visible = false
+        rec.hp.Visible = false
+    end
+
+    rec.name.Text = label
+    rec.name.Size = S.textSize
+    rec.name.Color = col
+    rec.name.Position = Vector2.new(x + w / 2, y - S.textSize - 3)
+    rec.name.Visible = true
+
+    if S.showDist then
+        rec.dist.Text = (S.distUnit == "m")
+            and string.format("%d m", math.floor(dist / 3.5))
+            or string.format("%d st", math.floor(dist))
+        rec.dist.Size = S.textSize - 1
+        rec.dist.Color = col
+        rec.dist.Position = Vector2.new(x + w / 2, y + h + 3)
+        rec.dist.Visible = true
+    else
+        rec.dist.Visible = false
+    end
+
+    if S.tracer then
+        rec.tracer.From = Vector2.new(cx, vp.Y)
+        rec.tracer.To = Vector2.new(x + w / 2, y + h)
+        rec.tracer.Color = CONFIG.Accent
+        rec.tracer.Thickness = S.thickness
+        rec.tracer.Visible = true
+    else
+        rec.tracer.Visible = false
+    end
+end
+
+local botRecs = {}
+
 local function frameUpdate()
     if not S.espEnabled or not hasDrawing then return end
     local cam = camera or Workspace.CurrentCamera
@@ -816,7 +882,7 @@ local function frameUpdate()
     local vp = cam.ViewportSize
     local cx = vp.X / 2
     local now = os.clock()
-    local my = getChar(lp)
+    local my = resolveChar(lp)
     local myTeam = teamOf(lp)
 
     for plr, entry in pairs(ESP.objects) do
@@ -826,101 +892,36 @@ local function frameUpdate()
             continue
         end
 
-        local char = getChar(plr)
-        if not char then
-            hide(rec)
-            continue
-        end
-
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if (hum and hum.Health <= 0) or char:GetAttribute("Dead") == true then
-            hide(rec)
-            continue
-        end
-
         if S.teamCheck and myTeam and teamOf(plr) == myTeam then
             hide(rec)
             continue
         end
 
-        local root = rootOf(char)
-        if not root then
-            hide(rec)
-            continue
+        drawTarget(rec, cam, camPos, cx, vp, resolveChar(plr), plr.Name, my, now, plr)
+    end
+
+    -- боты и зомби
+    local folder = charsFolder()
+    if S.showBots and folder then
+        local seen = {}
+        for _, model in ipairs(folder:GetChildren()) do
+            if model:IsA("Model") and model:GetAttribute("Bot") == true then
+                seen[model] = true
+                if not botRecs[model] then botRecs[model] = newRec() end
+                drawTarget(botRecs[model], cam, camPos, cx, vp, model, "BOT", my, now, model)
+            end
         end
-
-        local head = char:FindFirstChild("Head") or root
-        local dist = (camPos - root.Position).Magnitude
-        if dist > S.maxDist then
-            hide(rec)
-            continue
+        for model, rec in pairs(botRecs) do
+            if not seen[model] then
+                hide(rec)
+                if not model.Parent then
+                    for _, o in ipairs(rec.all) do pcall(function() o:Remove() end) end
+                    botRecs[model] = nil
+                end
+            end
         end
-
-        local sTop, onTop = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 1.1, 0))
-        local sBot, onBot = cam:WorldToViewportPoint(root.Position - Vector3.new(0, 3.1, 0))
-        if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
-            hide(rec)
-            continue
-        end
-
-        local h = sBot.Y - sTop.Y
-        local w = h * 0.45
-        local x = sTop.X - w / 2
-        local y = sTop.Y
-
-        if not visClock[plr] or now - visClock[plr] > 0.12 then
-            visClock[plr] = now
-            rayParams.FilterDescendantsInstances = { char, my }
-            local hit = Workspace:Raycast(camPos, head.Position - camPos, rayParams)
-            visState[plr] = (hit == nil or hit.Instance:IsDescendantOf(char))
-        end
-
-        local frac = hum and math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1) or 1
-        local col = colorFor(visState[plr] ~= false, frac)
-
-        drawBox(rec, x, y, w, h, col)
-
-        if S.hpMode == "bar" then
-            rec.hpBg.Position = Vector2.new(x - 6, y)
-            rec.hpBg.Size = Vector2.new(3, h)
-            rec.hpBg.Color = Color3.fromRGB(20, 20, 26)
-            rec.hpBg.Visible = true
-            rec.hp.Position = Vector2.new(x - 6, y + h * (1 - frac))
-            rec.hp.Size = Vector2.new(3, h * frac)
-            rec.hp.Color = Color3.fromRGB(90, 220, 120):Lerp(Color3.fromRGB(230, 70, 70), 1 - frac)
-            rec.hp.Visible = true
-        else
-            rec.hpBg.Visible = false
-            rec.hp.Visible = false
-        end
-
-        rec.name.Text = plr.Name
-        rec.name.Size = S.textSize
-        rec.name.Color = col
-        rec.name.Position = Vector2.new(x + w / 2, y - S.textSize - 3)
-        rec.name.Visible = true
-
-        if S.showDist then
-            rec.dist.Text = (S.distUnit == "m")
-                and string.format("%d m", math.floor(dist / 3.5))
-                or string.format("%d st", math.floor(dist))
-            rec.dist.Size = S.textSize - 1
-            rec.dist.Color = col
-            rec.dist.Position = Vector2.new(x + w / 2, y + h + 3)
-            rec.dist.Visible = true
-        else
-            rec.dist.Visible = false
-        end
-
-        if S.tracer then
-            rec.tracer.From = Vector2.new(cx, vp.Y)
-            rec.tracer.To = Vector2.new(x + w / 2, y + h)
-            rec.tracer.Color = CONFIG.Accent
-            rec.tracer.Thickness = S.thickness
-            rec.tracer.Visible = true
-        else
-            rec.tracer.Visible = false
-        end
+    elseif not S.showBots then
+        for _, rec in pairs(botRecs) do hide(rec) end
     end
 end
 
@@ -931,10 +932,20 @@ track(RunService.RenderStepped:Connect(function() pcall(frameUpdate) end))
 --==============================================================
 local lastJump = 0
 
+local function myChar()
+    local c = lp.Character
+    if c and c.Parent then return c end
+    local folder = charsFolder()
+    if folder then
+        local m = folder:FindFirstChild(lp.Name)
+        if m then return m end
+    end
+    return nil
+end
+
 local function myHum()
-    local c = getChar(lp)
-    if not c then return nil end
-    return c:FindFirstChildOfClass("Humanoid")
+    local c = myChar()
+    return c and c:FindFirstChildOfClass("Humanoid") or nil
 end
 
 local function grounded(hum)
@@ -972,9 +983,9 @@ track(RunService.RenderStepped:Connect(function()
     if not hum or hum.Health <= 0 then return end
 
     selfRead = true
-    local st = hum:GetState()
+    local ok, st = pcall(function() return hum:GetState() end)
     selfRead = false
-    if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then return end
+    if ok and (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) then return end
 
     local now = os.clock()
     if now - lastJump < 0.06 then return end
@@ -1026,21 +1037,26 @@ end
 --==============================================================
 --  СКИНЧЕНДЖЕР
 --==============================================================
-local Assets = ReplicatedStorage:WaitForChild("Assets", 20)
-local Weapons = Assets and Assets:WaitForChild("Weapons", 20)
-local SkinsFolder = Assets and Assets:WaitForChild("Skins", 20)
-local WeaponAnims = Assets and Assets:FindFirstChild("WeaponAnimations")
+local Assets = ReplicatedStorage:FindFirstChild("Assets")
+local SkinsFolder = Assets and Assets:FindFirstChild("Skins")
+if not SkinsFolder then
+    task.spawn(function()
+        local ok, a = pcall(function() return ReplicatedStorage:WaitForChild("Assets", 25) end)
+        if ok and a then
+            Assets = a
+            SkinsFolder = a:FindFirstChild("Skins") or a:WaitForChild("Skins", 25)
+        end
+    end)
+end
 
-local KNIFE_HINT = {
-    "knife", "karambit", "bayonet", "dagger", "falchion", "bowie",
-    "huntsman", "talon", "stiletto", "ursus", "navaja", "skeleton",
-    "nomad", "paracord", "survival", "classic",
-}
+local KNIFE_WORDS = { "knife", "karambit", "bayonet", "lightsaber" }
 
-local function isKnifeName(name)
+local function isKnife(name)
+    if type(name) ~= "string" then return false end
     local low = string.lower(name)
-    for _, h in ipairs(KNIFE_HINT) do
-        if string.find(low, h, 1, true) then return true end
+    if low:find("zeus", 1, true) then return false end
+    for _, w in ipairs(KNIFE_WORDS) do
+        if low:find(w, 1, true) then return true end
     end
     return false
 end
@@ -1049,7 +1065,7 @@ local function knifeList()
     local out = {}
     if SkinsFolder then
         for _, f in ipairs(SkinsFolder:GetChildren()) do
-            if isKnifeName(f.Name) then table.insert(out, f.Name) end
+            if isKnife(f.Name) then table.insert(out, f.Name) end
         end
     end
     table.sort(out)
@@ -1061,189 +1077,142 @@ local function skinList(knife)
     if not SkinsFolder or not knife then return out end
     local f = SkinsFolder:FindFirstChild(knife)
     if not f then return out end
-    for _, s in ipairs(f:GetChildren()) do table.insert(out, s.Name) end
+    for _, s in ipairs(f:GetChildren()) do
+        if not s.Name:find("PATTERN") then table.insert(out, s.Name) end
+    end
     table.sort(out)
     return out
 end
 
-local OFFSETS = {
-    ["Karambit"]        = CFrame.new(0, -1.5, 1.5),
-    ["Butterfly Knife"] = CFrame.new(0, -1.5, 1.5),
-    ["M9 Bayonet"]      = CFrame.new(0, -1.5, 1),
-    ["Flip Knife"]      = CFrame.new(0, -1.5, 1.25),
-    ["Gut Knife"]       = CFrame.new(0, -1.5, 0.5),
-}
-local DEFAULT_OFFSET = CFrame.new(0, -1.5, 1.2)
+local WEAR_ORDER = { "Factory New", "Minimal Wear", "Field-Tested", "Well-Worn", "Battle-Scarred" }
 
-local customVM, customIdle = nil, nil
-local hiddenParts = {}
-
-local function cam()
-    return camera or Workspace.CurrentCamera
+local function wearOf(skin)
+    local camFolder = skin:FindFirstChild("Camera")
+    if not camFolder then return skin end
+    for _, w in ipairs(WEAR_ORDER) do
+        local f = camFolder:FindFirstChild(w)
+        if f then return f end
+    end
+    return camFolder:GetChildren()[1]
 end
 
-local function isKnifeVM(obj)
-    if not obj:IsA("Model") then return false end
-    local n = obj.Name
-    return n == "T Knife" or n == "CT Knife" or n == "SleepKnife" or isKnifeName(n)
-end
-
-local function viewmodels()
+local function knifeViewmodels()
     local out = {}
-    local c = cam()
+    local c = camera or Workspace.CurrentCamera
     if not c then return out end
     for _, o in ipairs(c:GetChildren()) do
-        if isKnifeVM(o) then out[#out + 1] = o end
+        if o:IsA("Model") and isKnife(o.Name) and o:FindFirstChild("Weapon") then
+            out[#out + 1] = o
+        end
     end
     return out
 end
 
-local function hideOriginals()
-    for _, vm in ipairs(viewmodels()) do
-        if vm.Name ~= "SleepKnife" then
-            for _, p in ipairs(vm:GetDescendants()) do
-                if p:IsA("BasePart") and hiddenParts[p] == nil then
-                    hiddenParts[p] = p.Transparency
-                    p.Transparency = 1
-                end
-            end
-        end
-    end
-end
-
-local function showOriginals()
-    for p, t in pairs(hiddenParts) do
-        pcall(function() if p.Parent then p.Transparency = t end end)
-    end
-    hiddenParts = {}
-end
-
-local function clearCustom()
-    if customIdle then pcall(function() customIdle:Stop() end) end
-    customIdle = nil
-    if customVM then pcall(function() customVM:Destroy() end) end
-    customVM = nil
-end
-
-local function buildCustom(knife)
-    clearCustom()
-    if not Weapons or not knife then return false end
-    local tpl = Weapons:FindFirstChild(knife)
-    if not tpl then return false end
-    local camTpl = tpl:FindFirstChild("Camera")
-    if not camTpl then return false end
-
-    local vm = camTpl:Clone()
-    vm.Name = "SleepKnife"
-    for _, d in ipairs(vm:GetDescendants()) do
-        if d:IsA("BasePart") then
-            d.CanCollide = false
-            d.CanTouch = false
-            d.CanQuery = false
-            d.CastShadow = false
-            d.Anchored = false
-            d.Massless = true
-        end
-    end
-    vm.Parent = cam()
-    customVM = vm
-    hideOriginals()
-
-    pcall(function()
-        local folder = WeaponAnims[knife].CameraAnimations
-        local ac = vm:FindFirstChildOfClass("AnimationController") or vm:FindFirstChildOfClass("Animator")
-        local animator = ac:FindFirstChildWhichIsA("Animator") or ac
-        local idle = animator:LoadAnimation(folder.Idle)
-        idle.Looped = true
-        idle:Play()
-        customIdle = idle
-    end)
-    return true
-end
-
-track(RunService.RenderStepped:Connect(function()
-    if not customVM or not customVM.PrimaryPart then return end
-    local c = cam()
-    if not c then return end
-    customVM.PrimaryPart.CFrame = c.CFrame * (OFFSETS[S.knife] or DEFAULT_OFFSET)
-end))
-
-local function applySkinTo(model, skinFolderName, skinName)
-    if not SkinsFolder then return false end
-    local skinRoot = SkinsFolder:FindFirstChild(skinFolderName)
-    if not skinRoot then return false end
-    local skinObj = skinRoot:FindFirstChild(skinName)
+local function applySkinTo(vm, knife, skin)
+    if not SkinsFolder or not vm then return false end
+    local folder = SkinsFolder:FindFirstChild(knife)
+    if not folder then return false end
+    local skinObj = folder:FindFirstChild(skin)
     if not skinObj then return false end
-    local camFolder = skinObj:FindFirstChild("Camera")
-    if not camFolder then return false end
-    local wear = camFolder:FindFirstChild("Factory New") or camFolder:GetChildren()[1]
+    local wear = wearOf(skinObj)
     if not wear then return false end
 
-    local weaponFolder = model:FindFirstChild("Weapon")
-    local pool = weaponFolder and weaponFolder:GetDescendants() or model:GetDescendants()
-
     local touched = 0
-    for _, part in ipairs(pool) do
-        if part:IsA("BasePart") then
-            local src = wear:FindFirstChild(part.Name)
-            if src then
-                local ex = part:FindFirstChildOfClass("SurfaceAppearance")
-                if ex then ex:Destroy() end
-                if src:IsA("SurfaceAppearance") then
-                    local c = src:Clone()
-                    c.Name = "SurfaceAppearance"
-                    c.Parent = part
-                    touched += 1
-                elseif src:IsA("Texture") then
-                    local ex2 = part:FindFirstChildOfClass("Texture")
-                    if ex2 then ex2:Destroy() end
-                    local c = src:Clone()
-                    c.Parent = part
-                    touched += 1
-                end
+    for _, sa in ipairs(wear:GetChildren()) do
+        if sa:IsA("SurfaceAppearance") then
+            local part = vm:FindFirstChild(sa.Name, true)
+            if part and part:IsA("BasePart") then
+                local old = part:FindFirstChildOfClass("SurfaceAppearance")
+                if old then pcall(function() old:Destroy() end) end
+                local clone = sa:Clone()
+                clone.Name = "SurfaceAppearance"
+                clone.Parent = part
+                touched += 1
             end
         end
     end
     return touched > 0
 end
 
--- ключ папки скина: имя модели, если у неё есть свои скины, иначе выбранный нож
-local function skinKeyFor(model)
-    if SkinsFolder and SkinsFolder:FindFirstChild(model.Name) then return model.Name end
-    return S.knife
-end
-
 local function applySkin()
-    if not S.skin then return false end
+    if not S.knife or not S.skin then return false end
     local ok = false
-    for _, vm in ipairs(viewmodels()) do
-        local key = skinKeyFor(vm)
-        if key then
-            if applySkinTo(vm, key, S.skin) then ok = true end
-        end
+    for _, vm in ipairs(knifeViewmodels()) do
+        if applySkinTo(vm, S.knife, S.skin) then ok = true end
     end
     return ok
 end
 
 local function resetSkins()
-    for _, vm in ipairs(viewmodels()) do
+    for _, vm in ipairs(knifeViewmodels()) do
         for _, d in ipairs(vm:GetDescendants()) do
-            if d:IsA("SurfaceAppearance") or d:IsA("Texture") then
-                pcall(function() d:Destroy() end)
-            end
+            if d:IsA("SurfaceAppearance") then pcall(function() d:Destroy() end) end
         end
     end
 end
 
-task.spawn(function()
-    while task.wait(0.4) do
-        if S.customKnife and S.knife then
-            if not customVM or not customVM.Parent then
-                buildCustom(S.knife)
-            else
-                hideOriginals()
+--==============================================================
+--  ПОДМЕНА МОДЕЛИ НОЖА (хуки движка)
+--==============================================================
+local hookedEngine = false
+local origWeaponNew, origGetCameraModel
+local WeaponComponent, SkinsLib
+
+local function engineAlive()
+    local c = myChar()
+    if not c or c.Parent ~= charsFolder() then return false end
+    return not isDead(c)
+end
+
+local function installEngineHooks()
+    if hookedEngine or typeof(hookfunction) ~= "function" then return end
+
+    pcall(function()
+        WeaponComponent = require(ReplicatedStorage.Classes.WeaponComponent)
+    end)
+    pcall(function()
+        SkinsLib = require(ReplicatedStorage.Database.Components.Libraries.Skins)
+    end)
+
+    if not WeaponComponent or not SkinsLib then return end
+
+    local ok1 = pcall(function()
+        origWeaponNew = WeaponComponent.new
+        WeaponComponent.new = function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, ...)
+            if S.swapKnife and S.knife and p1 == lp and engineAlive() and isKnife(p5) then
+                local skin = S.skin or "Vanilla"
+                return origWeaponNew(p1, p2, p3, p4, S.knife, skin, 0.001, p8, p9, p10, p11, p12, ...)
             end
+            return origWeaponNew(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, ...)
         end
+    end)
+
+    local ok2 = pcall(function()
+        origGetCameraModel = SkinsLib.GetCameraModel
+        SkinsLib.GetCameraModel = function(weaponName, skinName, float, statTrack, nameTag, charm, stickers, team)
+            if S.swapKnife and S.knife and isKnife(weaponName) and engineAlive() then
+                local model = origGetCameraModel(S.knife, S.skin or "Vanilla", 0.001, statTrack, nameTag, charm, stickers, team)
+                if model then model.Name = S.knife end
+                return model
+            end
+            return origGetCameraModel(weaponName, skinName, float, statTrack, nameTag, charm, stickers, team)
+        end
+    end)
+
+    hookedEngine = ok1 or ok2
+end
+
+local function removeEngineHooks()
+    if not hookedEngine then return end
+    if WeaponComponent and origWeaponNew then pcall(function() WeaponComponent.new = origWeaponNew end) end
+    if SkinsLib and origGetCameraModel then pcall(function() SkinsLib.GetCameraModel = origGetCameraModel end) end
+    hookedEngine = false
+end
+
+-- держим скин и переустанавливаем хуки после респавна
+task.spawn(function()
+    while task.wait(0.5) do
+        if S.swapKnife then installEngineHooks() end
         if S.holdSkin and S.skin and S.knife then applySkin() end
     end
 end)
@@ -1252,32 +1221,26 @@ end)
 --  ДИАГНОСТИКА
 --==============================================================
 local function diagnose()
-    local lines = {}
-    local c = chars()
-    table.insert(lines, "Characters: " .. tostring(c))
+    local out = {}
+    table.insert(out, "Characters: " .. tostring(charsFolder()))
+    table.insert(out, "Мой персонаж: " .. tostring(myChar()))
+    table.insert(out, "Команда: " .. tostring(teamOf(lp)))
+    table.insert(out, "Resolver: " .. tostring(CharacterResolver))
+    table.insert(out, "Assets: " .. tostring(Assets) .. " / Skins: " .. tostring(SkinsFolder))
+    table.insert(out, "Ножей в базе: " .. tostring(#knifeList()))
+    local c = camera or Workspace.CurrentCamera
+    table.insert(out, "Камера-модели:")
     if c then
-        for _, t in ipairs(TEAMS) do
-            local f = c:FindFirstChild(t)
-            table.insert(lines, "  " .. t .. ": " .. (f and tostring(#f:GetChildren()) or "нет"))
+        for _, o in ipairs(c:GetChildren()) do
+            if o:IsA("Model") then
+                table.insert(out, "  " .. o.Name .. " weapon=" .. tostring(o:FindFirstChild("Weapon") ~= nil))
+            end
         end
     end
-    table.insert(lines, "lp.Character: " .. tostring(lp.Character))
-    table.insert(lines, "Команда: " .. tostring(teamOf(lp)))
-    local cc = cam()
-    table.insert(lines, "Камера-дети: " .. (cc and tostring(#cc:GetChildren()) or "нет"))
-    if cc then
-        for _, o in ipairs(cc:GetChildren()) do
-            if o:IsA("Model") then table.insert(lines, "  [M] " .. o.Name) end
-        end
-    end
-    table.insert(lines, "Assets: " .. tostring(Assets))
-    table.insert(lines, "Weapons: " .. (Weapons and tostring(#Weapons:GetChildren()) or "нет"))
-    table.insert(lines, "Skins: " .. (SkinsFolder and tostring(#SkinsFolder:GetChildren()) or "нет"))
-    table.insert(lines, "Ножей найдено: " .. tostring(#knifeList()))
-    local text = table.concat(lines, "\n")
+    local text = table.concat(out, "\n")
     print("[SleepScript] ДИАГНОСТИКА\n" .. text)
     if setclipboard then pcall(setclipboard, text) end
-    notify("Диагностика: F9, скопирована в буфер")
+    notify("Диагностика: F9, скопирована")
 end
 
 --==============================================================
@@ -1294,6 +1257,7 @@ toggle(visualPage, "Включить ESP", false, function(v)
     if v and not hasDrawing then notify("Нет Drawing API") end
 end)
 toggle(visualPage, "Игнорировать своих", true, function(v) S.teamCheck = v end)
+toggle(visualPage, "Показывать ботов", true, function(v) S.showBots = v end)
 slider(visualPage, "Макс. дистанция", 100, 2000, 500, function(v) S.maxDist = v end)
 
 section(visualPage, "форма")
@@ -1364,7 +1328,6 @@ end
 fillList(knifeBox, knifeList(), nil, function(name)
     S.knife = name
     refreshSkins()
-    if S.customKnife then buildCustom(name) end
 end)
 
 section(skinPage, "скин")
@@ -1378,13 +1341,13 @@ button(skinPage, "Сбросить скин", function()
     notify("Скин сброшен")
 end)
 toggle(skinPage, "Держать скин", true, function(v) S.holdSkin = v end)
-toggle(skinPage, "Подменить модель ножа", false, function(v)
-    S.customKnife = v
+toggle(skinPage, "Подменять модель ножа", false, function(v)
+    S.swapKnife = v
     if v then
-        if S.knife then buildCustom(S.knife) else notify("Сначала выбери нож") end
+        installEngineHooks()
+        notify(hookedEngine and "Подмена включена (нужен респавн/смена ножа)" or "Хуки недоступны")
     else
-        clearCustom()
-        showOriginals()
+        removeEngineHooks()
     end
 end)
 
@@ -1414,10 +1377,13 @@ tabBars.visual.Position = UDim2.new(0, 0, 0.5, -8)
 local function unload()
     for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
     for plr in pairs(ESP.objects) do unbindPlayer(plr) end
+    for model, rec in pairs(botRecs) do
+        for _, o in ipairs(rec.all) do pcall(function() o:Remove() end) end
+        botRecs[model] = nil
+    end
     if hookedIndex and origIndex then pcall(function() hookmetamethod(game, "__index", origIndex) end) end
     if hookedNamecall and origNamecall then pcall(function() hookmetamethod(game, "__namecall", origNamecall) end) end
-    clearCustom()
-    showOriginals()
+    removeEngineHooks()
     if camera then pcall(function() camera.FieldOfView = fovOriginal end) end
     pcall(function() blur:Destroy() end)
     pcall(function() gui:Destroy() end)
