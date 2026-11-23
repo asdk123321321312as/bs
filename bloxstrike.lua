@@ -10,7 +10,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "1.0",
+    Version   = "1.1",
 }
 
 if getgenv().SleepScript then pcall(function() getgenv().SleepScript.Unload() end) end
@@ -31,7 +31,6 @@ local Workspace         = cloneref(workspace)
 local lp                = Players.LocalPlayer
 
 local TEAMS = { "Terrorists", "Counter-Terrorists" }
-local Characters = Workspace:FindFirstChild("Characters")
 
 local S = {
     espEnabled = false,
@@ -42,7 +41,6 @@ local S = {
     showDist = true,
     distUnit = "m",
     hpMode = "bar",
-    skeleton = false,
     tracer = false,
     teamCheck = true,
     maxDist = 500,
@@ -72,28 +70,67 @@ local function notify(text, dur)
 end
 
 --==============================================================
---  ПЕРСОНАЖ
+--  ПЕРСОНАЖИ (папка переразрешается каждый раз)
 --==============================================================
-local function getChar(plr)
-    if Characters then
+local Characters = nil
+
+local function chars()
+    if Characters and Characters.Parent then return Characters end
+    Characters = Workspace:FindFirstChild("Characters")
+    return Characters
+end
+
+local function teamOf(plr)
+    local attr = plr:GetAttribute("Team")
+    if typeof(attr) == "string" then
+        local low = string.lower(attr)
+        if string.find(low, "counter", 1, true) then return "CT" end
+        if string.find(low, "terror", 1, true) then return "T" end
+    end
+    local team = plr.Team
+    if typeof(team) == "Instance" then
+        local low = string.lower(team.Name)
+        if string.find(low, "counter", 1, true) then return "CT" end
+        if string.find(low, "terror", 1, true) then return "T" end
+    end
+    local c = chars()
+    if c then
         for _, t in ipairs(TEAMS) do
-            local f = Characters:FindFirstChild(t)
-            local c = f and f:FindFirstChild(plr.Name)
-            if c then return c, t end
+            local f = c:FindFirstChild(t)
+            if f and f:FindFirstChild(plr.Name) then
+                return (t == "Terrorists") and "T" or "CT"
+            end
         end
     end
-    local ok, ch = pcall(function() return plr.Character end)
-    if ok and ch and ch.Parent then return ch, nil end
     return nil
 end
 
-local function myChar() return (getChar(lp)) end
+local function getChar(plr)
+    if not plr then return nil end
+    local ch = plr.Character
+    if ch and ch.Parent and ch:FindFirstChildOfClass("Humanoid") then return ch end
 
-local function getHum(char)
-    if not char then return nil end
-    local h = char:FindFirstChildOfClass("Humanoid")
-    if h then return h end
+    local c = chars()
+    if c then
+        for _, t in ipairs(TEAMS) do
+            local f = c:FindFirstChild(t)
+            local m = f and f:FindFirstChild(plr.Name)
+            if m and m:FindFirstChildOfClass("Humanoid") then return m end
+        end
+        local direct = c:FindFirstChild(plr.Name)
+        if direct and direct:FindFirstChildOfClass("Humanoid") then return direct end
+    end
+
+    if ch and ch.Parent then return ch end
     return nil
+end
+
+local function rootOf(char)
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart")
+        or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
+        or char.PrimaryPart
 end
 
 local groundParams = RaycastParams.new()
@@ -290,7 +327,7 @@ end
 makeDraggable(main, header)
 
 --==============================================================
---  ПЛАВНОЕ ОТКРЫТИЕ / ЗАКРЫТИЕ
+--  ОТКРЫТИЕ / ЗАКРЫТИЕ
 --==============================================================
 local opened = true
 
@@ -730,7 +767,7 @@ local rayParams = RaycastParams.new()
 rayParams.IgnoreWater = true
 local visState, visClock = {}, {}
 
-local function colorFor(visible, frac, dist)
+local function colorFor(visible, frac)
     if not visible then return S.colorHidden end
     if S.colorMode == "health" then
         return Color3.fromRGB(230, 70, 70):Lerp(Color3.fromRGB(90, 220, 120), frac)
@@ -779,7 +816,8 @@ local function frameUpdate()
     local vp = cam.ViewportSize
     local cx = vp.X / 2
     local now = os.clock()
-    local my, myTeam = getChar(lp)
+    local my = getChar(lp)
+    local myTeam = teamOf(lp)
 
     for plr, entry in pairs(ESP.objects) do
         local rec = entry.rec
@@ -788,57 +826,57 @@ local function frameUpdate()
             continue
         end
 
-        local char, team = getChar(plr)
+        local char = getChar(plr)
         if not char then
             hide(rec)
             continue
         end
 
-        local hum = getHum(char)
-        if hum and hum.Health <= 0 then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if (hum and hum.Health <= 0) or char:GetAttribute("Dead") == true then
             hide(rec)
             continue
         end
 
-        if S.teamCheck and myTeam and team and myTeam == team then
+        if S.teamCheck and myTeam and teamOf(plr) == myTeam then
             hide(rec)
             continue
         end
 
-        local ok, cf, size = pcall(function() return char:GetBoundingBox() end)
-        if not ok or not cf or size.Y < 0.5 then
+        local root = rootOf(char)
+        if not root then
             hide(rec)
             continue
         end
 
-        local center = cf.Position
-        local dist = (camPos - center).Magnitude
+        local head = char:FindFirstChild("Head") or root
+        local dist = (camPos - root.Position).Magnitude
         if dist > S.maxDist then
             hide(rec)
             continue
         end
 
-        local sTop, onTop = cam:WorldToViewportPoint(center + Vector3.new(0, size.Y / 2, 0))
-        local sBot, onBot = cam:WorldToViewportPoint(center - Vector3.new(0, size.Y / 2, 0))
+        local sTop, onTop = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 1.1, 0))
+        local sBot, onBot = cam:WorldToViewportPoint(root.Position - Vector3.new(0, 3.1, 0))
         if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
             hide(rec)
             continue
         end
 
         local h = sBot.Y - sTop.Y
-        local w = h * 0.42
+        local w = h * 0.45
         local x = sTop.X - w / 2
         local y = sTop.Y
 
         if not visClock[plr] or now - visClock[plr] > 0.12 then
             visClock[plr] = now
             rayParams.FilterDescendantsInstances = { char, my }
-            local hit = Workspace:Raycast(camPos, center - camPos, rayParams)
+            local hit = Workspace:Raycast(camPos, head.Position - camPos, rayParams)
             visState[plr] = (hit == nil or hit.Instance:IsDescendantOf(char))
         end
 
         local frac = hum and math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1) or 1
-        local col = colorFor(visState[plr] ~= false, frac, dist)
+        local col = colorFor(visState[plr] ~= false, frac)
 
         drawBox(rec, x, y, w, h, col)
 
@@ -891,69 +929,59 @@ track(RunService.RenderStepped:Connect(function() pcall(frameUpdate) end))
 --==============================================================
 --  АВТОБХОП
 --==============================================================
-local lastJump, airJumps = 0, 0
-
-local function holdingJump()
-    return UIS:IsKeyDown(Enum.KeyCode.Space)
-end
+local lastJump = 0
 
 local function myHum()
-    local c = myChar()
-    return getHum(c)
+    local c = getChar(lp)
+    if not c then return nil end
+    return c:FindFirstChildOfClass("Humanoid")
 end
 
 local function grounded(hum)
-    if not hum then return false end
-    local root = hum.RootPart or hum.Parent:FindFirstChild("HumanoidRootPart")
-    if not root or root.Anchored then return false end
+    local root = hum.RootPart or rootOf(hum.Parent)
+    if not root then return false end
     groundParams.FilterDescendantsInstances = { hum.Parent }
-    return Workspace:Raycast(root.Position, Vector3.new(0, -5.5, 0), groundParams) ~= nil
+    return Workspace:Raycast(root.Position, Vector3.new(0, -6, 0), groundParams) ~= nil
 end
 
 local function jump(hum)
-    local root = hum.RootPart or hum.Parent:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
     pcall(function() hum.Jump = true end)
 
     if S.bhopAggro then
-        local power = hum.JumpPower
-        if not hum.UseJumpPower then
-            power = math.sqrt(2 * Workspace.Gravity * hum.JumpHeight)
-        end
-        if power and power > 0 then
-            local v = root.AssemblyLinearVelocity
-            if v.Y < power * 0.95 then
-                root.AssemblyLinearVelocity = Vector3.new(v.X, power, v.Z)
+        local root = hum.RootPart or rootOf(hum.Parent)
+        if root then
+            local power = hum.JumpPower
+            if not hum.UseJumpPower then
+                power = math.sqrt(2 * Workspace.Gravity * hum.JumpHeight)
+            end
+            if power and power > 0 then
+                local v = root.AssemblyLinearVelocity
+                if v.Y < power * 0.95 then
+                    root.AssemblyLinearVelocity = Vector3.new(v.X, power, v.Z)
+                end
             end
         end
     end
 end
 
-track(UIS.JumpRequest:Connect(function()
+track(RunService.RenderStepped:Connect(function()
     if not S.bhop then return end
-    local hum = myHum()
-    if hum and hum.Health > 0 then
-        local now = os.clock()
-        if now - lastJump > 0.04 then
-            lastJump = now
-            jump(hum)
-        end
-    end
-end))
-
-track(RunService.Stepped:Connect(function()
-    if not S.bhop then return end
+    if not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
     local hum = myHum()
     if not hum or hum.Health <= 0 then return end
-    if grounded(hum) then
-        airJumps = 0
-        if holdingJump() and os.clock() - lastJump > 0.05 then
-            lastJump = os.clock()
-            jump(hum)
-        end
-    end
+
+    selfRead = true
+    local st = hum:GetState()
+    selfRead = false
+    if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then return end
+
+    local now = os.clock()
+    if now - lastJump < 0.06 then return end
+    if S.bhopAggro and not grounded(hum) then return end
+
+    lastJump = now
+    jump(hum)
 end))
 
 --==============================================================
@@ -962,16 +990,11 @@ end))
 local origIndex, origNamecall
 local hookedIndex, hookedNamecall = false, false
 
-local function currentHum()
-    local c = myChar()
-    return c and getHum(c) or nil
-end
-
 if typeof(hookmetamethod) == "function" then
     hookedIndex = pcall(function()
         origIndex = hookmetamethod(game, "__index", function(self, key)
             if key == "FloorMaterial" and S.noAirSpread and not selfRead then
-                if rawequal(self, currentHum()) then
+                if rawequal(self, myHum()) then
                     local real = origIndex(self, key)
                     if real == Enum.Material.Air then return Enum.Material.Plastic end
                     return real
@@ -987,7 +1010,7 @@ if typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "functi
         origNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             local method = getnamecallmethod()
             if method == "GetState" and S.noAirSpread and not selfRead then
-                if rawequal(self, currentHum()) then
+                if rawequal(self, myHum()) then
                     local st = origNamecall(self, ...)
                     if st == Enum.HumanoidStateType.Freefall or st == Enum.HumanoidStateType.Jumping then
                         return Enum.HumanoidStateType.Running
@@ -1000,25 +1023,12 @@ if typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "functi
     end)
 end
 
-track(RunService.RenderStepped:Connect(function()
-    if not S.noAirSpread then return end
-    local hum = currentHum()
-    if not hum or hum.Health <= 0 then return end
-    selfRead = true
-    local st = pcall(function() return hum:GetState() end) and hum:GetState() or nil
-    local mat = pcall(function() return hum.FloorMaterial end) and hum.FloorMaterial or nil
-    selfRead = false
-    if (st == Enum.HumanoidStateType.Freefall or st == Enum.HumanoidStateType.Jumping) and mat == Enum.Material.Air then
-        pcall(function() hum.FloorMaterial = Enum.Material.Plastic end)
-    end
-end))
-
 --==============================================================
 --  СКИНЧЕНДЖЕР
 --==============================================================
-local Assets = ReplicatedStorage:WaitForChild("Assets", 15)
-local Weapons = Assets and Assets:WaitForChild("Weapons", 15)
-local SkinsFolder = Assets and Assets:WaitForChild("Skins", 15)
+local Assets = ReplicatedStorage:WaitForChild("Assets", 20)
+local Weapons = Assets and Assets:WaitForChild("Weapons", 20)
+local SkinsFolder = Assets and Assets:WaitForChild("Skins", 20)
 local WeaponAnims = Assets and Assets:FindFirstChild("WeaponAnimations")
 
 local KNIFE_HINT = {
@@ -1037,17 +1047,12 @@ end
 
 local function knifeList()
     local out = {}
-    if Weapons then
-        for _, m in ipairs(Weapons:GetChildren()) do
-            if m:FindFirstChild("Camera") and isKnifeName(m.Name) then
-                table.insert(out, m.Name)
-            end
+    if SkinsFolder then
+        for _, f in ipairs(SkinsFolder:GetChildren()) do
+            if isKnifeName(f.Name) then table.insert(out, f.Name) end
         end
     end
     table.sort(out)
-    if #out == 0 then
-        out = { "Butterfly Knife", "Karambit", "M9 Bayonet", "Flip Knife", "Gut Knife" }
-    end
     return out
 end
 
@@ -1073,14 +1078,22 @@ local DEFAULT_OFFSET = CFrame.new(0, -1.5, 1.2)
 local customVM, customIdle = nil, nil
 local hiddenParts = {}
 
+local function cam()
+    return camera or Workspace.CurrentCamera
+end
+
+local function isKnifeVM(obj)
+    if not obj:IsA("Model") then return false end
+    local n = obj.Name
+    return n == "T Knife" or n == "CT Knife" or n == "SleepKnife" or isKnifeName(n)
+end
+
 local function viewmodels()
     local out = {}
-    local cam = camera or Workspace.CurrentCamera
-    if not cam then return out end
-    for _, o in ipairs(cam:GetChildren()) do
-        if o.Name == "T Knife" or o.Name == "CT Knife" or o.Name == "SleepKnife" then
-            out[#out + 1] = o
-        end
+    local c = cam()
+    if not c then return out end
+    for _, o in ipairs(c:GetChildren()) do
+        if isKnifeVM(o) then out[#out + 1] = o end
     end
     return out
 end
@@ -1132,7 +1145,7 @@ local function buildCustom(knife)
             d.Massless = true
         end
     end
-    vm.Parent = camera or Workspace.CurrentCamera
+    vm.Parent = cam()
     customVM = vm
     hideOriginals()
 
@@ -1150,23 +1163,27 @@ end
 
 track(RunService.RenderStepped:Connect(function()
     if not customVM or not customVM.PrimaryPart then return end
-    local cam = camera or Workspace.CurrentCamera
-    if not cam then return end
-    customVM.PrimaryPart.CFrame = cam.CFrame * (OFFSETS[S.knife] or DEFAULT_OFFSET)
+    local c = cam()
+    if not c then return end
+    customVM.PrimaryPart.CFrame = c.CFrame * (OFFSETS[S.knife] or DEFAULT_OFFSET)
 end))
 
-local function applySkinTo(model, knife, skin)
-    if not SkinsFolder then return end
-    local skinRoot = SkinsFolder:FindFirstChild(knife)
-    if not skinRoot then return end
-    local skinObj = skinRoot:FindFirstChild(skin)
-    if not skinObj then return end
+local function applySkinTo(model, skinFolderName, skinName)
+    if not SkinsFolder then return false end
+    local skinRoot = SkinsFolder:FindFirstChild(skinFolderName)
+    if not skinRoot then return false end
+    local skinObj = skinRoot:FindFirstChild(skinName)
+    if not skinObj then return false end
     local camFolder = skinObj:FindFirstChild("Camera")
-    if not camFolder then return end
+    if not camFolder then return false end
     local wear = camFolder:FindFirstChild("Factory New") or camFolder:GetChildren()[1]
-    if not wear then return end
+    if not wear then return false end
 
-    for _, part in ipairs(model:GetDescendants()) do
+    local weaponFolder = model:FindFirstChild("Weapon")
+    local pool = weaponFolder and weaponFolder:GetDescendants() or model:GetDescendants()
+
+    local touched = 0
+    for _, part in ipairs(pool) do
         if part:IsA("BasePart") then
             local src = wear:FindFirstChild(part.Name)
             if src then
@@ -1176,25 +1193,36 @@ local function applySkinTo(model, knife, skin)
                     local c = src:Clone()
                     c.Name = "SurfaceAppearance"
                     c.Parent = part
+                    touched += 1
                 elseif src:IsA("Texture") then
                     local ex2 = part:FindFirstChildOfClass("Texture")
                     if ex2 then ex2:Destroy() end
                     local c = src:Clone()
                     c.Parent = part
+                    touched += 1
                 end
             end
         end
     end
+    return touched > 0
+end
+
+-- ключ папки скина: имя модели, если у неё есть свои скины, иначе выбранный нож
+local function skinKeyFor(model)
+    if SkinsFolder and SkinsFolder:FindFirstChild(model.Name) then return model.Name end
+    return S.knife
 end
 
 local function applySkin()
-    if not S.knife or not S.skin then return false end
-    local applied = false
+    if not S.skin then return false end
+    local ok = false
     for _, vm in ipairs(viewmodels()) do
-        applySkinTo(vm, S.knife, S.skin)
-        applied = true
+        local key = skinKeyFor(vm)
+        if key then
+            if applySkinTo(vm, key, S.skin) then ok = true end
+        end
     end
-    return applied
+    return ok
 end
 
 local function resetSkins()
@@ -1207,21 +1235,50 @@ local function resetSkins()
     end
 end
 
--- поддержка: пересборка кастомного ножа и повторное натягивание скина
 task.spawn(function()
-    while task.wait(0.35) do
-        if not S.customKnife then continue end
-        if not S.knife then continue end
-        if not customVM or not customVM.Parent then
-            if #viewmodels() > 0 or true then
+    while task.wait(0.4) do
+        if S.customKnife and S.knife then
+            if not customVM or not customVM.Parent then
                 buildCustom(S.knife)
+            else
+                hideOriginals()
             end
-        else
-            hideOriginals()
         end
-        if S.holdSkin and S.skin then applySkin() end
+        if S.holdSkin and S.skin and S.knife then applySkin() end
     end
 end)
+
+--==============================================================
+--  ДИАГНОСТИКА
+--==============================================================
+local function diagnose()
+    local lines = {}
+    local c = chars()
+    table.insert(lines, "Characters: " .. tostring(c))
+    if c then
+        for _, t in ipairs(TEAMS) do
+            local f = c:FindFirstChild(t)
+            table.insert(lines, "  " .. t .. ": " .. (f and tostring(#f:GetChildren()) or "нет"))
+        end
+    end
+    table.insert(lines, "lp.Character: " .. tostring(lp.Character))
+    table.insert(lines, "Команда: " .. tostring(teamOf(lp)))
+    local cc = cam()
+    table.insert(lines, "Камера-дети: " .. (cc and tostring(#cc:GetChildren()) or "нет"))
+    if cc then
+        for _, o in ipairs(cc:GetChildren()) do
+            if o:IsA("Model") then table.insert(lines, "  [M] " .. o.Name) end
+        end
+    end
+    table.insert(lines, "Assets: " .. tostring(Assets))
+    table.insert(lines, "Weapons: " .. (Weapons and tostring(#Weapons:GetChildren()) or "нет"))
+    table.insert(lines, "Skins: " .. (SkinsFolder and tostring(#SkinsFolder:GetChildren()) or "нет"))
+    table.insert(lines, "Ножей найдено: " .. tostring(#knifeList()))
+    local text = table.concat(lines, "\n")
+    print("[SleepScript] ДИАГНОСТИКА\n" .. text)
+    if setclipboard then pcall(setclipboard, text) end
+    notify("Диагностика: F9, скопирована в буфер")
+end
 
 --==============================================================
 --  СТРАНИЦЫ
@@ -1267,8 +1324,8 @@ chips(visualPage, {
 }, S.colorStatic, function(v) S.colorStatic = v end)
 
 section(movePage, "бхоп")
-toggle(movePage, "Автобхоп (держать пробел)", false, function(v) S.bhop = v; airJumps = 0 end)
-toggle(movePage, "Агрессивный (форс-импульс)", false, function(v) S.bhopAggro = v end)
+toggle(movePage, "Автобхоп (держать пробел)", false, function(v) S.bhop = v end)
+toggle(movePage, "Агрессивный (только с земли)", false, function(v) S.bhopAggro = v end)
 
 section(movePage, "точность")
 toggle(movePage, "Убрать разброс в полёте", false, function(v) S.noAirSpread = v end)
@@ -1307,14 +1364,14 @@ end
 fillList(knifeBox, knifeList(), nil, function(name)
     S.knife = name
     refreshSkins()
+    if S.customKnife then buildCustom(name) end
 end)
 
 section(skinPage, "скин")
 button(skinPage, "Применить скин", function()
     if not S.knife then notify("Выбери нож") return end
     if not S.skin then notify("Выбери скин") return end
-    local ok = applySkin()
-    notify(ok and ("Скин: " .. S.skin) or "Нож не в руках")
+    notify(applySkin() and ("Скин: " .. S.skin) or "Нож не в руках")
 end)
 button(skinPage, "Сбросить скин", function()
     resetSkins()
@@ -1332,6 +1389,7 @@ toggle(skinPage, "Подменить модель ножа", false, function(v)
 end)
 
 section(miscPage, "служебное")
+button(miscPage, "Диагностика (F9)", diagnose)
 button(miscPage, "Закрыть меню (Z)", function() closeMenu() end)
 button(miscPage, "Выгрузить скрипт", function()
     if getgenv().SleepScript then getgenv().SleepScript.Unload() end
@@ -1368,7 +1426,6 @@ end
 
 getgenv().SleepScript = { Unload = unload, Settings = S }
 
-openMenu()
 notify("SleepScript загружен. Z — меню")
 
 end)
