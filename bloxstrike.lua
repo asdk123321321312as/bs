@@ -1,9 +1,8 @@
-
 local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "1.4",
+    Version   = "1.5",
 }
 
 if getgenv().SleepScript then pcall(function() getgenv().SleepScript.Unload() end) end
@@ -43,7 +42,7 @@ local S = {
     showBots = true,
     showLocal = false,
     nameMode = "name",
-    maxDist = 500,
+    maxDist = 2000,
     colorStatic = Color3.fromRGB(235, 235, 245),
     colorHidden = Color3.fromRGB(150, 150, 165),
     colorTracer = Color3.fromRGB(140, 110, 255),
@@ -100,14 +99,22 @@ task.spawn(function()
     end
 end)
 
+local function rootOf(char)
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart")
+        or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
+        or char.PrimaryPart
+end
+
 local function resolveChar(plr)
     if not plr then return nil end
     if CharacterResolver and CharacterResolver.getPlayerCharacter then
         local ok, c = pcall(CharacterResolver.getPlayerCharacter, plr)
-        if ok and c and c.Parent then return c end
+        if ok and c and c.Parent and rootOf(c) then return c end
     end
     local c = plr.Character
-    if c and c.Parent then return c end
+    if c and c.Parent and rootOf(c) then return c end
     local m = charMap[plr.Name]
     if m and m.Parent then return m end
     return nil
@@ -121,14 +128,6 @@ local function isDead(char)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum and hum.Health <= 0 then return true end
     return false
-end
-
-local function rootOf(char)
-    if not char then return nil end
-    return char:FindFirstChild("HumanoidRootPart")
-        or char:FindFirstChild("UpperTorso")
-        or char:FindFirstChild("Torso")
-        or char.PrimaryPart
 end
 
 local function feetOf(char)
@@ -801,6 +800,7 @@ track(Players.PlayerAdded:Connect(bindPlayer))
 track(Players.PlayerRemoving:Connect(unbindPlayer))
 
 local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater = true
 local visState, visClock = {}, {}
 
@@ -931,7 +931,9 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
 
     if not visClock[key] or now - visClock[key] > 0.15 then
         visClock[key] = now
-        rayParams.FilterDescendantsInstances = { char, my }
+        local filter = { char }
+        if my and my ~= char then table.insert(filter, my) end
+        rayParams.FilterDescendantsInstances = filter
         local hit = Workspace:Raycast(camPos, topPos - camPos, rayParams)
         visState[key] = (hit == nil or hit.Instance:IsDescendantOf(char))
     end
@@ -1047,14 +1049,22 @@ local function frameUpdate()
             continue
         end
         local char = resolveChar(plr)
-        if char and folder and char.Parent ~= folder then char = nil end
+        if char and not char:IsDescendantOf(Workspace) then char = nil end
         drawTarget(rec, cam, camPos, cx, vp, char, labelFor(plr), my, now, plr)
     end
 
     if S.showBots and folder then
+        local playerChars = {}
+        for plr in pairs(ESP.objects) do
+            local c = resolveChar(plr)
+            if c then playerChars[c] = true end
+            local m = charMap[plr.Name]
+            if m then playerChars[m] = true end
+        end
+
         local seen = {}
         for _, model in ipairs(folder:GetChildren()) do
-            if model:IsA("Model") and model:GetAttribute("Bot") == true then
+            if model:IsA("Model") and model ~= my and not playerChars[model] then
                 seen[model] = true
                 if not botRecs[model] then botRecs[model] = newRec() end
                 drawTarget(botRecs[model], cam, camPos, cx, vp, model, "BOT", my, now, model)
@@ -1151,13 +1161,52 @@ local function myHum()
     return c and c:FindFirstChildOfClass("Humanoid") or nil
 end
 
+local PROBE_DIRS = {
+    Vector3.new(0, 0, 0),
+    Vector3.new(1.1, 0, 0),
+    Vector3.new(-1.1, 0, 0),
+    Vector3.new(0, 0, 1.1),
+    Vector3.new(0, 0, -1.1),
+    Vector3.new(0.8, 0, 0.8),
+    Vector3.new(-0.8, 0, -0.8),
+}
+
+-- зонд земли: рейкасты вниз от ступней и от корпуса, свой персонаж исключён
+local function surfaceBelow(char)
+    if not char then return false end
+    local probes = {}
+    local feet = feetOf(char)
+    local root = rootOf(char)
+    if feet then table.insert(probes, { feet.Position, 2.6 }) end
+    if root then table.insert(probes, { root.Position, 6 }) end
+    if #probes == 0 then return false end
+
+    groundParams.FilterDescendantsInstances = { char }
+    for _, p in ipairs(probes) do
+        for _, off in ipairs(PROBE_DIRS) do
+            if Workspace:Raycast(p[1] + off, Vector3.new(0, -p[2], 0), groundParams) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function onGround(hum)
-    local floor = hum.FloorMaterial
-    if floor and floor ~= Enum.Material.Air then return true end
-    local root = hum.RootPart or rootOf(hum.Parent)
+    if not hum then return false end
+    local char = hum.Parent
+    if not char then return false end
+    local root = hum.RootPart or rootOf(char)
     if not root then return false end
-    groundParams.FilterDescendantsInstances = { hum.Parent, camera }
-    return Workspace:Raycast(root.Position, Vector3.new(0, -12, 0), groundParams) ~= nil
+    if root.AssemblyLinearVelocity.Y > 10 then return false end
+
+    -- FloorMaterial в игре всегда Air, плюс его подменяет noAirSpread, поэтому доверяем только без него
+    if not S.noAirSpread then
+        local floor = hum.FloorMaterial
+        if floor and floor ~= Enum.Material.Air then return true end
+    end
+
+    return surfaceBelow(char)
 end
 
 local function pressSpace()
@@ -1180,14 +1229,11 @@ local function doJump(hum)
     if S.bhopForce and root then
         local power = hum.JumpPower
         if not hum.UseJumpPower then
-            power = math.sqrt(2 * Workspace.Gravity * hum.JumpHeight)
+            power = math.sqrt(2 * math.max(Workspace.Gravity, 1) * math.max(hum.JumpHeight, 1))
         end
-        if power and power > 0 then
-            local v = root.AssemblyLinearVelocity
-            if v.Y < power * 0.9 then
-                root.AssemblyLinearVelocity = Vector3.new(v.X, power, v.Z)
-            end
-        end
+        power = math.clamp(power or 50, 20, 300)
+        local v = root.AssemblyLinearVelocity
+        root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, power), v.Z)
     end
 end
 
@@ -1200,13 +1246,12 @@ track(RunService.RenderStepped:Connect(function()
     local root = hum.RootPart or rootOf(hum.Parent)
     if not root then return end
 
-    local vy = root.AssemblyLinearVelocity.Y
-    if vy > 8 then return end
+    if root.AssemblyLinearVelocity.Y > 10 then return end
 
     if S.bhopGround and not onGround(hum) then return end
 
     local now = os.clock()
-    if now - lastJump < (0.05 + (S.bhopDelay or 0) / 1000) then return end
+    if now - lastJump < (0.04 + (S.bhopDelay or 0) / 1000) then return end
 
     lastJump = now
     doJump(hum)
@@ -1451,6 +1496,7 @@ local function diagnose()
     local hum = myHum()
     if hum then
         table.insert(out, "floor: " .. tostring(hum.FloorMaterial))
+        table.insert(out, "probe: " .. tostring(hum.Parent and surfaceBelow(hum.Parent)))
         table.insert(out, "state: " .. tostring(hum:GetState()))
         local root = hum.RootPart or rootOf(hum.Parent)
         table.insert(out, "root: " .. tostring(root))
@@ -1489,7 +1535,7 @@ end)
 toggle(visualPage, "Игнорировать своих", true, function(v) S.teamCheck = v end)
 toggle(visualPage, "Показывать ботов", true, function(v) S.showBots = v end)
 toggle(visualPage, "Показывать себя", false, function(v) S.showLocal = v end)
-slider(visualPage, "Макс. дистанция", 100, 2000, 500, function(v) S.maxDist = v end)
+slider(visualPage, "Макс. дистанция", 100, 5000, 2000, function(v) S.maxDist = v end)
 
 section(visualPage, "форма")
 chips(visualPage, {
@@ -1587,11 +1633,11 @@ task.spawn(function()
         local hum = myHum()
         local root = hum and (hum.RootPart or rootOf(hum.Parent))
         dbgLabel.Text = string.format(
-            "char:%s hum:%s floor:%s ground:%s vy:%.1f space:%s",
+            "char:%s hum:%s floor:%s probe:%s vy:%.1f space:%s",
             tostring(myChar() ~= nil),
             tostring(hum ~= nil),
             tostring(hum and hum.FloorMaterial),
-            tostring(hum and onGround(hum)),
+            tostring(hum and hum.Parent and surfaceBelow(hum.Parent)),
             root and root.AssemblyLinearVelocity.Y or 0,
             tostring(UIS:IsKeyDown(Enum.KeyCode.Space))
         )
