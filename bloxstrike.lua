@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "1.5",
+    Version   = "1.6",
 }
 
 if getgenv().SleepScript then pcall(function() getgenv().SleepScript.Unload() end) end
@@ -38,13 +38,14 @@ local S = {
     chams = false,
     outline = true,
     smooth = true,
+    visCheck = true,
     teamCheck = true,
     showBots = true,
     showLocal = false,
     nameMode = "name",
     maxDist = 2000,
     colorStatic = Color3.fromRGB(235, 235, 245),
-    colorHidden = Color3.fromRGB(150, 150, 165),
+    colorHidden = Color3.fromRGB(195, 195, 210),
     colorTracer = Color3.fromRGB(140, 110, 255),
     colorMode = "static",
     bhop = false,
@@ -81,10 +82,87 @@ pcall(function()
 end)
 
 local charMap = {}
+local modelOwner = {}
 
 local function charsFolder()
     return Workspace:FindFirstChild("Characters")
 end
+
+local function rootOf(char)
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart")
+        or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
+        or char.PrimaryPart
+end
+
+local function feetOf(char)
+    if not char then return nil end
+    return char:FindFirstChild("LeftFoot") or char:FindFirstChild("RightFoot")
+        or char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("RightLowerLeg")
+        or char:FindFirstChild("Left Leg") or char:FindFirstChild("Right Leg")
+end
+
+local OWNER_KEYS = { "UserId", "UserID", "Player", "Owner", "PlayerName", "OwnerName", "Username", "Name" }
+
+local function ownerFromAttributes(model)
+    for _, key in ipairs(OWNER_KEYS) do
+        local v = model:GetAttribute(key)
+        if typeof(v) == "number" then
+            local p = Players:GetPlayerByUserId(v)
+            if p then return p end
+        elseif typeof(v) == "string" then
+            local p = Players:FindFirstChild(v)
+            if p then return p end
+            local id = tonumber(v)
+            if id then
+                p = Players:GetPlayerByUserId(id)
+                if p then return p end
+            end
+        elseif typeof(v) == "Instance" then
+            if v:IsA("Player") then return v end
+        end
+    end
+    local ov = model:FindFirstChild("Player") or model:FindFirstChild("Owner")
+    if ov and ov:IsA("ObjectValue") and ov.Value and ov.Value:IsA("Player") then
+        return ov.Value
+    end
+    return nil
+end
+
+local function refreshOwners()
+    local folder = charsFolder()
+    local map = {}
+    if folder then
+        local plrs = Players:GetPlayers()
+        for _, m in ipairs(folder:GetChildren()) do
+            if m:IsA("Model") then
+                local owner = ownerFromAttributes(m)
+                if not owner then
+                    owner = Players:FindFirstChild(m.Name)
+                end
+                if not owner then
+                    for _, p in ipairs(plrs) do
+                        if #p.Name > 2 and m.Name:find(p.Name, 1, true) then
+                            owner = p
+                            break
+                        end
+                    end
+                end
+                if owner then map[m] = owner end
+            end
+        end
+    end
+    if lp.Character and lp.Character.Parent then map[lp.Character] = lp end
+    modelOwner = map
+end
+
+task.spawn(function()
+    while task.wait(0.4) do
+        local ok = pcall(refreshOwners)
+        if not ok then end
+    end
+end)
 
 task.spawn(function()
     while task.wait(0.4) do
@@ -99,14 +177,6 @@ task.spawn(function()
     end
 end)
 
-local function rootOf(char)
-    if not char then return nil end
-    return char:FindFirstChild("HumanoidRootPart")
-        or char:FindFirstChild("UpperTorso")
-        or char:FindFirstChild("Torso")
-        or char.PrimaryPart
-end
-
 local function resolveChar(plr)
     if not plr then return nil end
     if CharacterResolver and CharacterResolver.getPlayerCharacter then
@@ -115,9 +185,38 @@ local function resolveChar(plr)
     end
     local c = plr.Character
     if c and c.Parent and rootOf(c) then return c end
+    for m, o in pairs(modelOwner) do
+        if o == plr and m.Parent then return m end
+    end
     local m = charMap[plr.Name]
     if m and m.Parent then return m end
     return nil
+end
+
+local myCache, myCacheAt = nil, 0
+
+local function myChar()
+    if myCache and myCache.Parent and os.clock() - myCacheAt < 0.2 then return myCache end
+    local c = nil
+    if lp.Character and lp.Character.Parent and rootOf(lp.Character) then
+        c = lp.Character
+    else
+        for m, o in pairs(modelOwner) do
+            if o == lp and m.Parent then c = m break end
+        end
+        if not c then
+            local folder = charsFolder()
+            local m = folder and folder:FindFirstChild(lp.Name)
+            if m then c = m end
+        end
+    end
+    myCache, myCacheAt = c, os.clock()
+    return c
+end
+
+local function myHum()
+    local c = myChar()
+    return c and c:FindFirstChildOfClass("Humanoid") or nil
 end
 
 local function isDead(char)
@@ -130,16 +229,21 @@ local function isDead(char)
     return false
 end
 
-local function feetOf(char)
-    if not char then return nil end
-    return char:FindFirstChild("LeftFoot") or char:FindFirstChild("RightFoot")
-        or char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("RightLowerLeg")
-        or char:FindFirstChild("Left Leg") or char:FindFirstChild("Right Leg")
-end
-
 local function teamOf(plr)
+    if not plr then return nil end
     local t = plr:GetAttribute("Team")
     if typeof(t) == "string" then return t end
+    if plr.Team then return plr.Team.Name end
+    return nil
+end
+
+local function teamOfModel(model, owner)
+    local t = teamOf(owner)
+    if t then return t end
+    if model then
+        local mt = model:GetAttribute("Team")
+        if typeof(mt) == "string" then return mt end
+    end
     return nil
 end
 
@@ -722,7 +826,6 @@ end
 --==============================================================
 --  ESP
 --==============================================================
-local ESP = { objects = {} }
 local FONT = (Drawing and Drawing.Fonts and Drawing.Fonts.UI) or 2
 
 local function sq(filled)
@@ -776,28 +879,30 @@ local function newRec()
     return rec
 end
 
+local recs = {}
+
+local function recFor(model)
+    local r = recs[model]
+    if not r then
+        r = newRec()
+        recs[model] = r
+    end
+    return r
+end
+
+local function dropRec(model)
+    local r = recs[model]
+    if not r then return end
+    for _, o in ipairs(r.all) do pcall(function() o:Remove() end) end
+    recs[model] = nil
+end
+
 local function hide(rec)
     rec.box.Filled = false
     for i = 1, #rec.all do rec.all[i].Visible = false end
     rec.lastW = nil
     rec.lastH = nil
 end
-
-local function bindPlayer(plr)
-    if ESP.objects[plr] then return end
-    ESP.objects[plr] = { rec = newRec() }
-end
-
-local function unbindPlayer(plr)
-    local e = ESP.objects[plr]
-    if not e then return end
-    for _, o in ipairs(e.rec.all) do pcall(function() o:Remove() end) end
-    ESP.objects[plr] = nil
-end
-
-for _, p in ipairs(Players:GetPlayers()) do bindPlayer(p) end
-track(Players.PlayerAdded:Connect(bindPlayer))
-track(Players.PlayerRemoving:Connect(unbindPlayer))
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -883,7 +988,7 @@ local function drawSkeleton(rec, cam, char, hum, col)
 end
 
 local function labelFor(plr)
-    if S.nameMode == "off" then return nil end
+    if not plr or S.nameMode == "off" then return nil end
     if S.nameMode == "display" then return plr.DisplayName end
     if S.nameMode == "both" then return plr.DisplayName .. " (" .. plr.Name .. ")" end
     return plr.Name
@@ -929,13 +1034,22 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
     local x = sTop.X - w / 2
     local y = sTop.Y
 
-    if not visClock[key] or now - visClock[key] > 0.15 then
-        visClock[key] = now
-        local filter = { char }
-        if my and my ~= char then table.insert(filter, my) end
-        rayParams.FilterDescendantsInstances = filter
-        local hit = Workspace:Raycast(camPos, topPos - camPos, rayParams)
-        visState[key] = (hit == nil or hit.Instance:IsDescendantOf(char))
+    local visible = true
+    if S.visCheck then
+        if not visClock[key] or now - visClock[key] > 0.15 then
+            visClock[key] = now
+            local filter = { char }
+            if my and my ~= char then table.insert(filter, my) end
+            local camNow = camera or Workspace.CurrentCamera
+            if camNow then table.insert(filter, camNow) end
+            rayParams.FilterDescendantsInstances = filter
+            local hit = Workspace:Raycast(camPos, topPos - camPos, rayParams)
+            local ok = (hit == nil
+                or hit.Instance:IsDescendantOf(char)
+                or (camNow ~= nil and hit.Instance:IsDescendantOf(camNow)))
+            visState[key] = ok
+        end
+        visible = visState[key] ~= false
     end
 
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -943,7 +1057,7 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
     local maxHp = hum and math.max(hum.MaxHealth, 1) or 100
     local frac = math.clamp(hp / maxHp, 0, 1)
 
-    local col = colorFor(visState[key] ~= false, frac, dist)
+    local col = colorFor(visible, frac, dist)
     drawBox(rec, x, y, w, h, col)
 
     if S.hpMode == "bar" then
@@ -1023,64 +1137,52 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
     end
 end
 
-local botRecs = {}
-
 local function frameUpdate()
     if not S.espEnabled or not hasDrawing then return end
     local cam = camera or Workspace.CurrentCamera
     if not cam then return end
+    local folder = charsFolder()
+    if not folder then return end
 
     local camPos = cam.CFrame.Position
     local vp = cam.ViewportSize
     local cx = vp.X / 2
     local now = os.clock()
-    local my = resolveChar(lp)
+    local my = myChar()
     local myTeam = teamOf(lp)
-    local folder = charsFolder()
+    local alive = {}
 
-    for plr, entry in pairs(ESP.objects) do
-        local rec = entry.rec
-        if plr == lp and not S.showLocal then
-            hide(rec)
-            continue
+    for _, model in ipairs(folder:GetChildren()) do
+        if model:IsA("Model") then
+            alive[model] = true
+            local rec = recFor(model)
+            local owner = modelOwner[model]
+            local skip = false
+
+            if owner == lp and not S.showLocal then
+                skip = true
+            elseif not owner and not S.showBots then
+                skip = true
+            elseif S.teamCheck and myTeam then
+                local t = teamOfModel(model, owner)
+                if t and t == myTeam then skip = true end
+            end
+
+            if skip then
+                hide(rec)
+            else
+                local label = owner and labelFor(owner) or "BOT"
+                drawTarget(rec, cam, camPos, cx, vp, model, label, my, now, model)
+            end
         end
-        if S.teamCheck and myTeam and teamOf(plr) == myTeam then
-            hide(rec)
-            continue
-        end
-        local char = resolveChar(plr)
-        if char and not char:IsDescendantOf(Workspace) then char = nil end
-        drawTarget(rec, cam, camPos, cx, vp, char, labelFor(plr), my, now, plr)
     end
 
-    if S.showBots and folder then
-        local playerChars = {}
-        for plr in pairs(ESP.objects) do
-            local c = resolveChar(plr)
-            if c then playerChars[c] = true end
-            local m = charMap[plr.Name]
-            if m then playerChars[m] = true end
+    for model in pairs(recs) do
+        if not alive[model] then
+            dropRec(model)
+            visState[model] = nil
+            visClock[model] = nil
         end
-
-        local seen = {}
-        for _, model in ipairs(folder:GetChildren()) do
-            if model:IsA("Model") and model ~= my and not playerChars[model] then
-                seen[model] = true
-                if not botRecs[model] then botRecs[model] = newRec() end
-                drawTarget(botRecs[model], cam, camPos, cx, vp, model, "BOT", my, now, model)
-            end
-        end
-        for model, rec in pairs(botRecs) do
-            if not seen[model] then
-                hide(rec)
-                if not model.Parent then
-                    for _, o in ipairs(rec.all) do pcall(function() o:Remove() end) end
-                    botRecs[model] = nil
-                end
-            end
-        end
-    elseif not S.showBots then
-        for _, rec in pairs(botRecs) do hide(rec) end
     end
 end
 
@@ -1098,7 +1200,7 @@ local function updateChams()
         return
     end
 
-    local my = resolveChar(lp)
+    local my = myChar()
     local myTeam = teamOf(lp)
     local folder = charsFolder()
     if not folder then return end
@@ -1106,12 +1208,15 @@ local function updateChams()
     local wanted = {}
     for _, m in ipairs(folder:GetChildren()) do
         if m:IsA("Model") and m ~= my and not isDead(m) then
-            local plr = Players:FindFirstChild(m.Name)
+            local owner = modelOwner[m]
             local ok = true
-            if plr then
-                if S.teamCheck and myTeam and teamOf(plr) == myTeam then ok = false end
-            elseif not (S.showBots and m:GetAttribute("Bot") == true) then
+            if owner == lp then
                 ok = false
+            elseif not owner then
+                if not S.showBots then ok = false end
+            elseif S.teamCheck and myTeam then
+                local t = teamOfModel(m, owner)
+                if t and t == myTeam then ok = false end
             end
             if ok then wanted[m] = true end
         end
@@ -1150,16 +1255,8 @@ end)
 --  АВТОБХОП
 --==============================================================
 local lastJump = 0
+local jumpCount = 0
 local pressBusy = false
-
-local function myChar()
-    return resolveChar(lp)
-end
-
-local function myHum()
-    local c = myChar()
-    return c and c:FindFirstChildOfClass("Humanoid") or nil
-end
 
 local PROBE_DIRS = {
     Vector3.new(0, 0, 0),
@@ -1200,7 +1297,6 @@ local function onGround(hum)
     if not root then return false end
     if root.AssemblyLinearVelocity.Y > 10 then return false end
 
-    -- FloorMaterial в игре всегда Air, плюс его подменяет noAirSpread, поэтому доверяем только без него
     if not S.noAirSpread then
         local floor = hum.FloorMaterial
         if floor and floor ~= Enum.Material.Air then return true end
@@ -1219,17 +1315,26 @@ local function pressSpace()
     end)
 end
 
-local function doJump(hum)
-    local root = hum.RootPart or rootOf(hum.Parent)
+local function doJump(char)
+    if not char then return end
+    local root = rootOf(char)
+    if not root then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
 
-    pcall(function() hum.Jump = true end)
-    pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+    if hum then
+        pcall(function() hum.Jump = true end)
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+    end
     pressSpace()
 
-    if S.bhopForce and root then
-        local power = hum.JumpPower
-        if not hum.UseJumpPower then
-            power = math.sqrt(2 * math.max(Workspace.Gravity, 1) * math.max(hum.JumpHeight, 1))
+    if S.bhopForce then
+        local power = 50
+        if hum then
+            if hum.UseJumpPower then
+                power = hum.JumpPower
+            else
+                power = math.sqrt(2 * math.max(Workspace.Gravity, 1) * math.max(hum.JumpHeight, 1))
+            end
         end
         power = math.clamp(power or 50, 20, 300)
         local v = root.AssemblyLinearVelocity
@@ -1241,20 +1346,26 @@ track(RunService.RenderStepped:Connect(function()
     if not S.bhop then return end
     if not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
 
-    local hum = myHum()
-    if not hum or hum.Health <= 0 then return end
-    local root = hum.RootPart or rootOf(hum.Parent)
+    local char = myChar()
+    if not char then return end
+    local root = rootOf(char)
     if not root then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health <= 0 then return end
 
     if root.AssemblyLinearVelocity.Y > 10 then return end
 
-    if S.bhopGround and not onGround(hum) then return end
+    if S.bhopGround then
+        local grounded = hum and onGround(hum) or surfaceBelow(char)
+        if not grounded then return end
+    end
 
     local now = os.clock()
     if now - lastJump < (0.04 + (S.bhopDelay or 0) / 1000) then return end
 
     lastJump = now
-    doJump(hum)
+    jumpCount += 1
+    doJump(char)
 end))
 
 --==============================================================
@@ -1487,12 +1598,26 @@ end)
 --==============================================================
 local function diagnose()
     local out = {}
-    table.insert(out, "Characters: " .. tostring(charsFolder()))
+    local folder = charsFolder()
+    table.insert(out, "Characters: " .. tostring(folder))
     table.insert(out, "Мой персонаж: " .. tostring(myChar()))
     table.insert(out, "Мой hum: " .. tostring(myHum()))
     table.insert(out, "Команда: " .. tostring(teamOf(lp)))
     table.insert(out, "Resolver: " .. tostring(CharacterResolver))
-    table.insert(out, "VIM: " .. tostring(VIM))
+    table.insert(out, "Моделей с владельцем: " .. tostring((function() local n = 0 for _ in pairs(modelOwner) do n += 1 end return n end)()))
+    if folder then
+        local shown = 0
+        for _, m in ipairs(folder:GetChildren()) do
+            if m:IsA("Model") and shown < 15 then
+                shown += 1
+                local attrs = {}
+                for k, v in pairs(m:GetAttributes()) do
+                    table.insert(attrs, k .. "=" .. tostring(v))
+                end
+                table.insert(out, string.format("  model %s -> %s | %s", m.Name, tostring(modelOwner[m]), table.concat(attrs, ", ")))
+            end
+        end
+    end
     local hum = myHum()
     if hum then
         table.insert(out, "floor: " .. tostring(hum.FloorMaterial))
@@ -1500,19 +1625,12 @@ local function diagnose()
         table.insert(out, "state: " .. tostring(hum:GetState()))
         local root = hum.RootPart or rootOf(hum.Parent)
         table.insert(out, "root: " .. tostring(root))
-        if root then table.insert(out, "vy: " .. tostring(root.AssemblyLinearVelocity.Y)) end
-    end
-    table.insert(out, "Assets: " .. tostring(Assets) .. " / Skins: " .. tostring(SkinsFolder))
-    table.insert(out, "Ножей: " .. tostring(#knifeList()))
-    local c = camera or Workspace.CurrentCamera
-    table.insert(out, "Камера-модели:")
-    if c then
-        for _, o in ipairs(c:GetChildren()) do
-            if o:IsA("Model") then
-                table.insert(out, "  " .. o.Name .. " weapon=" .. tostring(o:FindFirstChild("Weapon") ~= nil))
-            end
+        if root then
+            table.insert(out, "anchored: " .. tostring(root.Anchored))
+            table.insert(out, "vy: " .. tostring(root.AssemblyLinearVelocity.Y))
         end
     end
+    table.insert(out, "Прыжков: " .. tostring(jumpCount))
     local text = table.concat(out, "\n")
     print("[SleepScript] ДИАГНОСТИКА\n" .. text)
     if setclipboard then pcall(setclipboard, text) end
@@ -1535,6 +1653,7 @@ end)
 toggle(visualPage, "Игнорировать своих", true, function(v) S.teamCheck = v end)
 toggle(visualPage, "Показывать ботов", true, function(v) S.showBots = v end)
 toggle(visualPage, "Показывать себя", false, function(v) S.showLocal = v end)
+toggle(visualPage, "Проверка стен", true, function(v) S.visCheck = v end)
 slider(visualPage, "Макс. дистанция", 100, 5000, 2000, function(v) S.maxDist = v end)
 
 section(visualPage, "форма")
@@ -1630,15 +1749,19 @@ task.spawn(function()
             dbgLabel.Text = "бхоп выключен"
             continue
         end
-        local hum = myHum()
-        local root = hum and (hum.RootPart or rootOf(hum.Parent))
+        local ch = myChar()
+        local root = ch and rootOf(ch)
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
         dbgLabel.Text = string.format(
-            "char:%s hum:%s floor:%s probe:%s vy:%.1f space:%s",
-            tostring(myChar() ~= nil),
+            "char:%s hum:%s root:%s anch:%s floor:%s probe:%s vy:%.1f jumps:%d space:%s",
+            tostring(ch ~= nil),
             tostring(hum ~= nil),
+            tostring(root ~= nil),
+            tostring(root and root.Anchored),
             tostring(hum and hum.FloorMaterial),
-            tostring(hum and hum.Parent and surfaceBelow(hum.Parent)),
+            tostring(ch and surfaceBelow(ch)),
             root and root.AssemblyLinearVelocity.Y or 0,
+            jumpCount,
             tostring(UIS:IsKeyDown(Enum.KeyCode.Space))
         )
     end
@@ -1719,11 +1842,7 @@ tabBars.visual.Position = UDim2.new(0, 0, 0.5, -8)
 --==============================================================
 local function unload()
     for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
-    for plr in pairs(ESP.objects) do unbindPlayer(plr) end
-    for model, rec in pairs(botRecs) do
-        for _, o in ipairs(rec.all) do pcall(function() o:Remove() end) end
-        botRecs[model] = nil
-    end
+    for model in pairs(recs) do dropRec(model) end
     for _, h in pairs(chams) do pcall(function() h:Destroy() end) end
     chams = {}
     if hookedIndex and origIndex then pcall(function() hookmetamethod(game, "__index", origIndex) end) end
