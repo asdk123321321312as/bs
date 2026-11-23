@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "2.7",
+    Version   = "2.8",
 }
 
 local env = _G
@@ -153,7 +153,6 @@ pcall(function()
     CharacterResolver = require(ReplicatedStorage.Components.Common.CharacterResolver)
 end)
 
-local charMap = {}
 local modelOwner = {}
 
 local function charsFolder()
@@ -177,27 +176,6 @@ local function humOf(char)
     h = char:FindFirstChild("Humanoid", true)
     if h and h:IsA("Humanoid") then return h end
     return nil
-end
-
-local function eachCandidate(cb)
-    local folder = charsFolder()
-    if folder then
-        for _, m in ipairs(folder:GetChildren()) do
-            if m:IsA("Model") then cb(m) end
-        end
-    end
-    for _, c in ipairs(Workspace:GetChildren()) do
-        if c ~= folder and (c:IsA("Folder") or c:IsA("Model")) then
-            local kids = c:GetChildren()
-            if #kids <= 400 then
-                for _, m in ipairs(kids) do
-                    if m:IsA("Model") and (modelOwner[m] or humOf(m)) then
-                        cb(m)
-                    end
-                end
-            end
-        end
-    end
 end
 
 local OWNER_KEYS = { "UserId", "UserID", "Player", "Owner", "PlayerName", "OwnerName", "Username", "Name" }
@@ -230,19 +208,24 @@ end
 local function refreshOwners()
     local map = {}
     local plrs = Players:GetPlayers()
-    eachCandidate(function(m)
-        local owner = ownerFromAttributes(m)
-        if not owner then owner = Players:FindFirstChild(m.Name) end
-        if not owner then
-            for _, p in ipairs(plrs) do
-                if #p.Name > 2 and m.Name:find(p.Name, 1, true) then
-                    owner = p
-                    break
+    local folder = charsFolder()
+    if folder then
+        for _, m in ipairs(folder:GetChildren()) do
+            if m:IsA("Model") then
+                local owner = ownerFromAttributes(m)
+                if not owner then owner = Players:FindFirstChild(m.Name) end
+                if not owner then
+                    for _, p in ipairs(plrs) do
+                        if #p.Name > 2 and m.Name:find(p.Name, 1, true) then
+                            owner = p
+                            break
+                        end
+                    end
                 end
+                if owner then map[m] = owner end
             end
         end
-        if owner then map[m] = owner end
-    end)
+    end
     if lp.Character and lp.Character.Parent then map[lp.Character] = lp end
     modelOwner = map
 end
@@ -250,19 +233,6 @@ end
 task.spawn(function()
     while not dead and task.wait(0.4) do
         pcall(refreshOwners)
-    end
-end)
-
-task.spawn(function()
-    while not dead and task.wait(0.4) do
-        local folder = charsFolder()
-        local new = {}
-        if folder then
-            for _, m in ipairs(folder:GetChildren()) do
-                if m:IsA("Model") then new[m.Name] = m end
-            end
-        end
-        charMap = new
     end
 end)
 
@@ -277,7 +247,8 @@ local function resolveChar(plr)
     for m, o in pairs(modelOwner) do
         if o == plr and m.Parent then return m end
     end
-    local m = charMap[plr.Name]
+    local folder = charsFolder()
+    local m = folder and folder:FindFirstChild(plr.Name)
     if m and m.Parent then return m end
     return nil
 end
@@ -965,7 +936,6 @@ end
 local function hide(rec)
     rec.box.Filled = false
     for i = 1, #rec.all do rec.all[i].Visible = false end
-    rec.lastW = nil
     rec.lastH = nil
 end
 
@@ -1013,33 +983,33 @@ local function drawBox(rec, x, y, w, h, col)
     put(rec.corners[8], x + w - t, y + h - c, t, c, col)
 end
 
--- точный габарит модели, бокс жёстко привязан к ней
-local function modelBox(cam, model)
-    local ok, cf, size = pcall(model.GetBoundingBox, model)
-    if not ok or not cf or not size then return nil end
-    local sx = math.clamp(size.X, 0.4, 10) * 0.5
-    local sy = math.clamp(size.Y, 0.4, 10) * 0.5
-    local sz = math.clamp(size.Z, 0.4, 10) * 0.5
-    local minX, minY, maxX, maxY
-    for i = 0, 7 do
-        local off = Vector3.new(
-            (i % 2 == 0) and -sx or sx,
-            (i % 4 < 2) and -sy or sy,
-            (i < 4) and -sz or sz
-        )
-        local sp, on = cam:WorldToViewportPoint((cf * CFrame.new(off)).Position)
-        if on and sp.Z > 0 then
-            minX = math.min(minX or sp.X, sp.X)
-            maxX = math.max(maxX or sp.X, sp.X)
-            minY = math.min(minY or sp.Y, sp.Y)
-            maxY = math.max(maxY or sp.Y, sp.Y)
-        end
+-- точки тела строго относительно корня
+local function bodyPoints(char, root)
+    local head = char:FindFirstChild("Head")
+    local top
+    if head and head:IsA("BasePart") and (head.Position - root.Position).Magnitude < 4 then
+        top = head.Position + Vector3.new(0, head.Size.Y * 0.5, 0)
+    else
+        top = root.Position + Vector3.new(0, 2.4, 0)
     end
-    if not minX then return nil end
-    return minX, minY, maxX, maxY, (cf * CFrame.new(0, sy, 0)).Position
+    local feet = char:FindFirstChild("RightFoot")
+        or char:FindFirstChild("LeftFoot")
+        or char:FindFirstChild("RightLeg")
+        or char:FindFirstChild("LeftLeg")
+    local bot
+    if feet and feet:IsA("BasePart") and (feet.Position - root.Position).Magnitude < 4 then
+        bot = feet.Position - Vector3.new(0, feet.Size.Y * 0.5, 0)
+    else
+        bot = root.Position - Vector3.new(0, 2.4, 0)
+    end
+    if (bot - top).Magnitude < 1 then
+        top = root.Position + Vector3.new(0, 2.4, 0)
+        bot = root.Position - Vector3.new(0, 2.4, 0)
+    end
+    return top, bot
 end
 
-local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
+local function drawTarget(rec, cam, camPos, char, label, my, now, key)
     if not char or isDead(char) then hide(rec) return end
 
     local root = rootOf(char)
@@ -1052,54 +1022,26 @@ local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
     rec.lastSeen = now
     rec.label = label
 
-    local x, y, w, h, topPos
-    local bx1, by1, bx2, by2, topWorld = modelBox(cam, geom or char)
-
-    if bx1 then
-        local rawW, rawH = bx2 - bx1, by2 - by1
-        if rawH > 0 and rawW > 0 and (rawH / rawW) < 12 then
-            if rec.lastH then
-                rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.5
-                rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.5
-            else
-                rec.lastH, rec.lastW = rawH, rawW
-            end
-            h = math.max(rec.lastH, 2)
-            w = math.max(rec.lastW, 2)
-            x = (bx1 + bx2) / 2 - w / 2
-            y = (by1 + by2) / 2 - h / 2
-            topPos = topWorld
-        else
-            bx1 = nil
-        end
+    local topW, botW = bodyPoints(char, root)
+    local sTop, onTop = cam:WorldToViewportPoint(topW)
+    local sBot, onBot = cam:WorldToViewportPoint(botW)
+    if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
+        hide(rec)
+        return
     end
 
-    if not bx1 then
-        local head = char:FindFirstChild("Head")
-        topPos = head
-            and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.4, 0))
-            or (root.Position + Vector3.new(0, 2.6, 0))
-        local botPos = root.Position - Vector3.new(0, 2.8, 0)
+    local rawH = sBot.Y - sTop.Y
+    if rawH < 1 or rawH > 2500 then hide(rec) return end
 
-        local sTop, onTop = cam:WorldToViewportPoint(topPos)
-        local sBot, onBot = cam:WorldToViewportPoint(botPos)
-        if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
-            hide(rec)
-            return
-        end
-        local rawH = sBot.Y - sTop.Y
-        local rawW = rawH * 0.42
-        if rec.lastH then
-            rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.45
-            rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.45
-        else
-            rec.lastH, rec.lastW = rawH, rawW
-        end
-        h = math.max(rec.lastH, 2)
-        w = math.max(rec.lastW, 2)
-        x = sTop.X - w / 2
-        y = sTop.Y
+    if rec.lastH then
+        rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.5
+    else
+        rec.lastH = rawH
     end
+    local h = math.max(rec.lastH, 2)
+    local w = math.max(h * 0.44, 2)
+    local x = sTop.X - w / 2
+    local y = sTop.Y
 
     if not visClock[key] or now - visClock[key] > 0.15 then
         visClock[key] = now
@@ -1108,7 +1050,7 @@ local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
         local camNow = camera or Workspace.CurrentCamera
         if camNow then table.insert(filter, camNow) end
         rayParams.FilterDescendantsInstances = filter
-        local hit = Workspace:Raycast(camPos, topPos - camPos, rayParams)
+        local hit = Workspace:Raycast(camPos, topW - camPos, rayParams)
         visState[key] = (hit == nil
             or hit.Instance:IsDescendantOf(char)
             or (camNow ~= nil and hit.Instance:IsDescendantOf(camNow)))
@@ -1168,37 +1110,18 @@ local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
 end
 
 local function drawGhost(rec, cam, camPos, pos, label)
-    local mn = pos + Vector3.new(-0.85, -2.7, -0.85)
-    local mx = pos + Vector3.new(0.85, 2.5, 0.85)
-    local bx1, by1, bx2, by2 = modelBox(cam, nil) or nil, nil, nil, nil
-    local ok = false
-    if mn and mx then
-        local minX, minY, maxX, maxY
-        for i = 0, 7 do
-            local c = Vector3.new(
-                (i % 2 == 0) and mn.X or mx.X,
-                (i % 4 < 2) and mn.Y or mx.Y,
-                (i < 4) and mn.Z or mx.Z
-            )
-            local sp, on = cam:WorldToViewportPoint(c)
-            if on and sp.Z > 0 then
-                minX = math.min(minX or sp.X, sp.X)
-                maxX = math.max(maxX or sp.X, sp.X)
-                minY = math.min(minY or sp.Y, sp.Y)
-                maxY = math.max(maxY or sp.Y, sp.Y)
-            end
-        end
-        if minX then
-            bx1, by1, bx2, by2 = minX, minY, maxX, maxY
-            ok = true
-        end
+    local top = pos + Vector3.new(0, 2.4, 0)
+    local bot = pos - Vector3.new(0, 2.4, 0)
+    local sTop, onTop = cam:WorldToViewportPoint(top)
+    local sBot, onBot = cam:WorldToViewportPoint(bot)
+    if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
+        hide(rec)
+        return
     end
-    if not ok then hide(rec) return end
-
-    local w = math.max(bx2 - bx1, 2)
-    local h = math.max(by2 - by1, 2)
-    local x = (bx1 + bx2) / 2 - w / 2
-    local y = (by1 + by2) / 2 - h / 2
+    local h = math.max(sBot.Y - sTop.Y, 2)
+    local w = math.max(h * 0.44, 2)
+    local x = sTop.X - w / 2
+    local y = sTop.Y
     local col = S.colorHidden
 
     drawBox(rec, x, y, w, h, col)
@@ -1223,42 +1146,45 @@ local function drawGhost(rec, cam, camPos, pos, label)
     end
 end
 
+-- цели строятся от игроков, а не от случайных моделей
 local targets = {}
 
-local function ownerOf(model)
-    local o = modelOwner[model]
-    if o then return o end
-    o = Players:FindFirstChild(model.Name)
-    if o then return o end
-    local name = model.Name
-    for _, p in ipairs(Players:GetPlayers()) do
-        if #p.Name > 2 and name:find(p.Name, 1, true) then return p end
+local function collectTargets()
+    local list, seen = {}, {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= lp then
+            local c = resolveChar(plr)
+            if c and c.Parent and not seen[c] and not isDead(c) then
+                seen[c] = true
+                list[#list + 1] = { char = c, owner = plr }
+            end
+        end
     end
-    return nil
+    if S.showBots then
+        local folder = charsFolder()
+        if folder then
+            for _, m in ipairs(folder:GetChildren()) do
+                if m:IsA("Model") and not seen[m] and not modelOwner[m] and not isDead(m) then
+                    seen[m] = true
+                    list[#list + 1] = { char = m, owner = nil }
+                end
+            end
+        end
+    end
+    if S.showLocal then
+        local me = myChar()
+        if me and not seen[me] then
+            seen[me] = true
+            list[#list + 1] = { char = me, owner = lp }
+        end
+    end
+    return list
 end
 
 task.spawn(function()
-    while not dead and task.wait(0.15) do
-        local list = {}
-        pcall(function()
-            local folder = charsFolder()
-            if folder then
-                for _, m in ipairs(folder:GetChildren()) do
-                    if m:IsA("Model") then list[m] = true end
-                end
-            end
-            for _, c in ipairs(Workspace:GetChildren()) do
-                if c ~= folder and (c:IsA("Folder") or c:IsA("Model")) then
-                    local kids = c:GetChildren()
-                    if #kids <= 400 then
-                        for _, m in ipairs(kids) do
-                            if m:IsA("Model") and humOf(m) then list[m] = true end
-                        end
-                    end
-                end
-            end
-        end)
-        targets = list
+    while not dead and task.wait(0.12) do
+        local ok, res = pcall(collectTargets)
+        if ok then targets = res end
     end
 end)
 
@@ -1271,33 +1197,29 @@ local function frameUpdate()
     local now = os.clock()
     local my = myChar()
     local myTeam = teamOf(lp)
+    local alive = {}
 
-    for model in pairs(targets) do
-        local rec = recFor(model)
-        local owner = ownerOf(model)
-        local skip = false
-
-        if not model.Parent then
-            skip = true
-        elseif owner == lp then
-            skip = not S.showLocal
-        elseif not owner then
-            skip = not S.showBots
-        elseif S.teamCheck and myTeam then
-            local t = teamOfModel(model, owner)
-            if t and t == myTeam then skip = true end
-        end
-
-        if skip then
-            hide(rec)
-            rec.lastPos = nil
-        else
-            drawTarget(rec, cam, camPos, model, nil, owner and owner.Name or "BOT", my, now, model)
+    for _, t in ipairs(targets) do
+        local char, owner = t.char, t.owner
+        if char.Parent then
+            alive[char] = true
+            local rec = recFor(char)
+            local skip = false
+            if owner and owner ~= lp and S.teamCheck and myTeam then
+                local tm = teamOfModel(char, owner)
+                if tm and tm == myTeam then skip = true end
+            end
+            if skip then
+                hide(rec)
+                rec.lastPos = nil
+            else
+                drawTarget(rec, cam, camPos, char, owner and owner.Name or "BOT", my, now, char)
+            end
         end
     end
 
     for model, rec in pairs(recs) do
-        if not targets[model] then
+        if not alive[model] then
             if rec.lastPos and (now - (rec.lastSeen or 0)) < GHOST_TIME then
                 drawGhost(rec, cam, camPos, rec.lastPos, rec.label)
             else
@@ -1333,17 +1255,13 @@ local function updateGuiEsp()
     local myTeam = teamOf(lp)
     local wanted = {}
 
-    for m in pairs(targets) do
-        if m.Parent and m ~= my and not isDead(m) then
-            local owner = ownerOf(m)
+    for _, t in ipairs(targets) do
+        local m, owner = t.char, t.owner
+        if m.Parent and m ~= my then
             local ok = true
-            if owner == lp then
-                ok = false
-            elseif not owner then
-                ok = S.showBots
-            elseif S.teamCheck and myTeam then
-                local t = teamOfModel(m, owner)
-                if t and t == myTeam then ok = false end
+            if owner and owner ~= lp and S.teamCheck and myTeam then
+                local tm = teamOfModel(m, owner)
+                if tm and tm == myTeam then ok = false end
             end
             if ok then wanted[m] = owner end
         end
@@ -1408,6 +1326,7 @@ end)
 local lastState = "-"
 local jumpCount = 0
 local failCount = 0
+local lastChannels = "-"
 
 local bh = {
     mode = S.unanchor and "vel" or "auto",
@@ -1498,38 +1417,73 @@ local function pressSpace()
     end)
 end
 
+-- каналы разнесены по кадрам, чтобы не гасить друг друга
+local function jumpBurst(char, root, hum, mode)
+    task.spawn(function()
+        local notes = {}
+
+        if hum then
+            local okP = pcall(function()
+                if hum.UseJumpPower ~= true then
+                    hum.UseJumpPower = true
+                    notes[#notes + 1] = "powerMode"
+                end
+                if hum.JumpPower < 1 then
+                    hum.JumpPower = 55
+                    notes[#notes + 1] = "power"
+                end
+            end)
+            if not okP then notes[#notes + 1] = "powerErr" end
+        end
+
+        pressSpace()
+        notes[#notes + 1] = "key"
+        RunService.RenderStepped:Wait()
+
+        if hum and hum.Health > 0 then
+            if pcall(function() hum.Jump = true end) then notes[#notes + 1] = "jump" end
+        end
+
+        if mode == "vel" then
+            if root.Anchored then pcall(function() root.Anchored = false end) end
+            local v = root.AssemblyLinearVelocity
+            pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 55), v.Z) end)
+            notes[#notes + 1] = "vel"
+        end
+        RunService.RenderStepped:Wait()
+
+        if hum and hum.Health > 0 then
+            if pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end) then
+                notes[#notes + 1] = "state"
+            end
+        end
+
+        if mode == "hop" then
+            if not root.Anchored then
+                local v = root.AssemblyLinearVelocity
+                pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 45), v.Z) end)
+            end
+            hop.active = true
+            hop.start = os.clock()
+            hop.baseY = root.Position.Y
+            hop.model = char
+            notes[#notes + 1] = "hop"
+        end
+
+        lastChannels = table.concat(notes, "+")
+    end)
+end
+
 local function doJump(now, root, hum)
     local mode = (bh.mode == "auto") and "hum" or bh.mode
     local char = myChar()
-
-    if mode == "hum" then
-        if hum and hum.Health > 0 then
-            pcall(function() hum.Jump = true end)
-        end
-        pressSpace()
-    elseif mode == "vel" then
-        if root.Anchored then pcall(function() root.Anchored = false end) end
-        local v = root.AssemblyLinearVelocity
-        pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 55), v.Z) end)
-        pressSpace()
-    else
-        local v = root.AssemblyLinearVelocity
-        if not root.Anchored then
-            pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 45), v.Z) end)
-        end
-        hop.active = true
-        hop.start = now
-        hop.baseY = root.Position.Y
-        hop.model = char
-    end
-
     if S.trigger == "wheel" then bh.wheelArmed = 0 end
-
     bh.pending = now
     bh.lastY = root.Position.Y
     bh.peak = 0
     jumpCount += 1
     lastState = "прыжок/" .. mode
+    jumpBurst(char, root, hum, mode)
 end
 
 local function bhopTick()
@@ -1548,7 +1502,7 @@ local function bhopTick()
     if bh.pending > 0 and root then
         local dy = root.Position.Y - bh.lastY
         if dy > bh.peak then bh.peak = dy end
-        if now - bh.pending > 0.3 then
+        if now - bh.pending > 0.32 then
             bh.pending = 0
             if bh.peak < 0.6 then
                 failCount += 1
@@ -1790,14 +1744,16 @@ local function partNamesOf()
     return set
 end
 
+local function isArmName(n)
+    return n:find("arm", 1, true) ~= nil
+        or n:find("hand", 1, true) ~= nil
+        or n:find("glove", 1, true) ~= nil
+        or n:find("sleeve", 1, true) ~= nil
+end
+
 local function hasArmPart(model)
     for _, p in ipairs(model:GetDescendants()) do
-        if p:IsA("BasePart") then
-            local n = norm(p.Name)
-            if n:find("arm", 1, true) or n:find("hand", 1, true) or n:find("glove", 1, true) then
-                return true
-            end
-        end
+        if p:IsA("BasePart") and isArmName(norm(p.Name)) then return true end
     end
     return false
 end
@@ -1882,9 +1838,21 @@ local function applySkinTo(vm, weapon, skin)
     end
     if #sources == 0 then return nil end
 
+    local cat = categoryOf(weapon)
     local parts = {}
     for _, p in ipairs(vm:GetDescendants()) do
-        if p:IsA("BasePart") then parts[#parts + 1] = p end
+        if p:IsA("BasePart") then
+            if cat == "gloves" then
+                if isArmName(norm(p.Name)) then parts[#parts + 1] = p end
+            else
+                parts[#parts + 1] = p
+            end
+        end
+    end
+    if #parts == 0 then
+        for _, p in ipairs(vm:GetDescendants()) do
+            if p:IsA("BasePart") then parts[#parts + 1] = p end
+        end
     end
     if #parts == 0 then return nil end
 
@@ -1892,7 +1860,7 @@ local function applySkinTo(vm, weapon, skin)
     local used = {}
     for _, sa in ipairs(sources) do
         local part = findPart(vm, sa.Name)
-        if part and not used[part] then
+        if part and not used[part] and (cat ~= "gloves" or isArmName(norm(part.Name))) then
             used[part] = true
             refs[#refs + 1] = putSurface(part, sa)
         end
@@ -2020,9 +1988,9 @@ local function installEngineHooks()
     local ok1 = pcall(function()
         origWeaponNew = WeaponComponent.new
         WeaponComponent.new = function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, ...)
-            if S.swapWeapon and S.weapon and p1 == lp and engineAlive()
-                and categoryOf(p5) == categoryOf(S.weapon) then
-                return origWeaponNew(p1, p2, p3, p4, S.weapon, S.skin or "Vanilla", 0.001, p8, p9, p10, p11, p12, ...)
+            if S.weapon and p1 == lp and engineAlive() and categoryOf(p5) == categoryOf(S.weapon) then
+                local useWeapon = S.swapWeapon and S.weapon or p5
+                return origWeaponNew(p1, p2, p3, p4, useWeapon, S.skin or p6, 0.001, p8, p9, p10, p11, p12, ...)
             end
             return origWeaponNew(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, ...)
         end
@@ -2031,10 +1999,11 @@ local function installEngineHooks()
     local ok2 = pcall(function()
         origGetCameraModel = SkinsLib.GetCameraModel
         SkinsLib.GetCameraModel = function(weaponName, skinName, float, statTrack, nameTag, charm, stickers, team)
-            if S.swapWeapon and S.weapon and engineAlive()
-                and categoryOf(weaponName) == categoryOf(S.weapon) then
-                local model = origGetCameraModel(S.weapon, S.skin or "Vanilla", 0.001, statTrack, nameTag, charm, stickers, team)
-                if model then model.Name = S.weapon end
+            if S.weapon and engineAlive() and categoryOf(weaponName) == categoryOf(S.weapon) then
+                local useWeapon = S.swapWeapon and S.weapon or weaponName
+                local useSkin = S.skin or skinName
+                local model = origGetCameraModel(useWeapon, useSkin, 0.001, statTrack, nameTag, charm, stickers, team)
+                if model then model.Name = useWeapon end
                 return model
             end
             return origGetCameraModel(weaponName, skinName, float, statTrack, nameTag, charm, stickers, team)
@@ -2051,10 +2020,10 @@ local function removeEngineHooks()
     hookedEngine = false
 end
 
--- удержание + автоприменение при появлении новой модели
+-- хуки ставятся сами, как только есть выбор
 task.spawn(function()
     while not dead and task.wait(0.5) do
-        if S.swapWeapon then installEngineHooks() end
+        if S.weapon and S.skin then installEngineHooks() end
         if S.holdSkin and S.skin and S.weapon then
             for _, vm in ipairs(skinTargets(S.weapon)) do
                 applyToTarget(vm)
@@ -2088,8 +2057,7 @@ task.spawn(function()
     end
 end)
 
-track(lp.CharacterAdded:Connect(function()
-    task.wait(0.4)
+local function respawnBurst()
     if dead then return end
     bh.mode = S.unanchor and "vel" or "auto"
     bh.fails = 0
@@ -2097,13 +2065,18 @@ track(lp.CharacterAdded:Connect(function()
     bh.pending = 0
     if S.weapon and S.skin then
         task.spawn(function()
-            for _ = 1, 8 do
+            for _ = 1, 14 do
                 if dead then break end
-                if applySkin() then break end
-                task.wait(0.2)
+                applySkin()
+                task.wait(0.15)
             end
         end)
     end
+end
+
+track(lp.CharacterAdded:Connect(function()
+    task.wait(0.3)
+    respawnBurst()
 end))
 
 --==============================================================
@@ -2112,6 +2085,7 @@ end))
 local function diagnose()
     local out = {}
     table.insert(out, "state: " .. tostring(lastState))
+    table.insert(out, "каналы: " .. tostring(lastChannels))
     table.insert(out, "режим: " .. bh.mode .. " интервал: " .. string.format("%.2f", bh.interval))
     table.insert(out, "триггер: " .. tostring(S.trigger))
     table.insert(out, "rise: " .. string.format("%.2f", bh.peak))
@@ -2123,6 +2097,8 @@ local function diagnose()
     table.insert(out, "Skins path: " .. modPath("Skins"))
     table.insert(out, "hooked: " .. tostring(hookedEngine))
     table.insert(out, "save: " .. tostring(canSave()))
+    table.insert(out, "целей: " .. tostring(#targets))
+    table.insert(out, "целей скина: " .. tostring(#skinTargets(S.weapon or "")))
     local ch = myChar()
     local root = ch and rootOf(ch)
     if root then
@@ -2139,6 +2115,7 @@ local function diagnose()
         table.insert(out, "floor: " .. tostring(ok2 and mat or "err"))
         table.insert(out, "jump: " .. tostring(hum.Jump))
         table.insert(out, "jumpPower: " .. tostring(hum.JumpPower))
+        table.insert(out, "useJumpPower: " .. tostring(hum.UseJumpPower))
     end
     local text = table.concat(out, "\n")
     print("[SleepScript] ДИАГНОСТИКА\n" .. text)
@@ -2313,10 +2290,9 @@ button(movePage, "Тест прыжка", function()
     local char = myChar()
     local root = char and rootOf(char)
     if not root then notify("Персонаж не найден") return end
-    local hum = humOf(char)
-    doJump(os.clock(), root, hum)
-    task.delay(0.35, function()
-        notify("подъём: " .. string.format("%.2f", bh.peak) .. " / " .. tostring(lastState))
+    doJump(os.clock(), root, humOf(char))
+    task.delay(0.4, function()
+        notify("подъём " .. string.format("%.2f", bh.peak) .. " | " .. tostring(lastChannels))
     end)
 end)
 
@@ -2341,8 +2317,8 @@ task.spawn(function()
             dbgLabel.Text = "бхоп выключен"
             continue
         end
-        dbgLabel.Text = string.format("режим:%s триг:%s инт:%.2f подъём:%.1f прыжков:%d сбоев:%d %s",
-            bh.mode, S.trigger, bh.interval, bh.peak, jumpCount, failCount, lastState)
+        dbgLabel.Text = string.format("%s | %s | rise %.1f | %d/%d | %s",
+            bh.mode, S.trigger, bh.peak, jumpCount, failCount, lastState)
     end
 end)
 
@@ -2443,12 +2419,12 @@ button(skinPage, "Применить скин", function()
     task.spawn(function()
         for vm in pairs(applied) do applied[vm] = nil end
         local ok = false
-        for _ = 1, 8 do
+        for _ = 1, 10 do
             if dead then break end
             if applySkin() then ok = true break end
             task.wait(0.12)
         end
-        notify(ok and "Скин применён" or "Модель не найдена — попробуй в руках")
+        notify(ok and "Скин применён" or "Модель не найдена — возьми в руки")
     end)
 end)
 button(skinPage, "Сбросить скин", function()
@@ -2461,8 +2437,33 @@ toggle(skinPage, "Подменять модель (по категории)", S.
     if v then
         installEngineHooks()
         notify(hookedEngine and "Подмена включена" or "Хуки недоступны")
-    else
-        removeEngineHooks()
+    end
+end)
+
+section(miscPage, "состояние")
+local statusLabel = new("TextLabel", {
+    Text = "—",
+    Font = Enum.Font.Code,
+    TextSize = 11,
+    TextColor3 = Color3.fromRGB(140, 140, 160),
+    BackgroundColor3 = Color3.fromRGB(13, 13, 18),
+    BorderSizePixel = 0,
+    Size = UDim2.new(1, 0, 0, 54),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true,
+}, miscPage)
+new("UICorner", { CornerRadius = UDim.new(0, 8) }, statusLabel)
+new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingTop = UDim.new(0, 4) }, statusLabel)
+
+task.spawn(function()
+    while not dead and task.wait(0.5) do
+        statusLabel.Text = string.format(
+            "esp %s | целей %d\nскин %s | моделей %d | хуки %s\nsave %s | бхоп %s",
+            tostring(S.espEnabled), #targets,
+            tostring(S.weapon or "-"), #skinTargets(S.weapon or ""), tostring(hookedEngine),
+            tostring(canSave()), tostring(S.bhop)
+        )
     end
 end)
 
@@ -2522,7 +2523,8 @@ task.spawn(function()
     if not dead then
         refreshWeapons()
         refreshSkins()
-        if S.weapon and S.skin and (S.holdSkin or S.swapWeapon) then
+        if S.weapon and S.skin then
+            installEngineHooks()
             task.spawn(function()
                 for _ = 1, 6 do
                     if dead then break end
@@ -2538,7 +2540,7 @@ end)
 --  ПРИМЕНЕНИЕ ЗАГРУЖЕННОГО
 --==============================================================
 if S.fovEnabled then applyFov() end
-if S.swapWeapon then installEngineHooks() end
+if S.weapon and S.skin then installEngineHooks() end
 
 --==============================================================
 --  ВЫГРУЗКА
