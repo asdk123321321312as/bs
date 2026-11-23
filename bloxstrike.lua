@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "2.1",
+    Version   = "2.3",
 }
 
 local env = _G
@@ -58,9 +58,9 @@ local S = {
     noAirSpread = false,
     fovEnabled = false,
     fovValue = 90,
-    knife = nil,
+    weapon = nil,
     skin = nil,
-    swapKnife = false,
+    swapWeapon = false,
     holdSkin = true,
 }
 
@@ -1411,7 +1411,7 @@ local failCount = 0
 local firedConns = 0
 
 local bh = {
-    mode = "auto",      -- auto -> hum -> vel -> hop
+    mode = "auto",      -- auto -> hum -> vel -> remote -> hop
     interval = 0.33,
     nextAt = 0,
     lastY = 0,
@@ -1419,8 +1419,10 @@ local bh = {
     pending = 0,
     humFails = 0,
     velFails = 0,
+    remoteFails = 0,
+    hopFails = 0,
 }
-local hop = { active = false, start = 0, dur = 0.42, height = 5, lastOffset = 0, root = nil }
+local hop = { active = false, start = 0, dur = 0.42, height = 5.2, lastWant = 0, baseY = 0, model = nil }
 
 local fakeInput = {
     KeyCode = Enum.KeyCode.Space,
@@ -1430,7 +1432,6 @@ local fakeInput = {
 }
 fakeInput.IsA = function() return false end
 
--- прямой вызов обработчиков игры
 local function fireConnections(state)
     if typeof(getconnections) ~= "function" then return 0 end
     local ok, conns = pcall(getconnections, UIS.InputBegan)
@@ -1447,7 +1448,6 @@ local function fireConnections(state)
     return n
 end
 
--- экшены ContextActionService, привязанные к пробелу
 local function fireActions()
     local ok, info = pcall(function() return CAS:GetAllBoundActionInfo() end)
     if not ok or type(info) ~= "table" then return 0 end
@@ -1493,57 +1493,152 @@ local function fireJump()
     fireKey()
 end
 
+--==============================================================
+--  КАНАЛЫ ПРЫЖКА
+--==============================================================
+local jumpRemotes = {}
+local scanAt = 0
+
+local function scanChannels(force)
+    local now = os.clock()
+    if not force and now - scanAt < 5 then return #jumpRemotes end
+    scanAt = now
+    local out = {}
+    local roots = { ReplicatedStorage, lp:FindFirstChild("PlayerScripts") }
+    for _, root in ipairs(roots) do
+        if root then
+            local ok, desc = pcall(function() return root:GetDescendants() end)
+            if ok then
+                for _, d in ipairs(desc) do
+                    if d:IsA("RemoteEvent") or d:IsA("UnreliableRemoteEvent") or d:IsA("RemoteFunction") then
+                        local n = string.lower(d.Name)
+                        if n:find("jump", 1, true) or n:find("hop", 1, true) then
+                            out[#out + 1] = d
+                        end
+                    end
+                end
+            end
+        end
+    end
+    jumpRemotes = out
+    return #jumpRemotes
+end
+
+local function fireRemotes()
+    if #jumpRemotes == 0 then return 0 end
+    local n = 0
+    for _, r in ipairs(jumpRemotes) do
+        if r.Parent then
+            n += 1
+            if r:IsA("RemoteFunction") then
+                task.spawn(function() pcall(function() r:InvokeServer() end) end)
+            else
+                task.spawn(function()
+                    pcall(function() r:FireServer() end)
+                    pcall(function() r:FireServer(true) end)
+                end)
+            end
+        end
+    end
+    return n
+end
+
+local function fireAttributes(char)
+    if not char then return 0 end
+    local n = 0
+    for _, key in ipairs({ "Jump", "Jumping", "WantJump" }) do
+        pcall(function() char:SetAttribute(key, true) end)
+        n += 1
+    end
+    for _, nm in ipairs({ "Jump", "Jumping" }) do
+        local b = char:FindFirstChild(nm)
+        if b and b:IsA("BoolValue") then
+            pcall(function() b.Value = true end)
+            n += 1
+        end
+    end
+    return n
+end
+
+--==============================================================
+--  ПОДБРОС
+--==============================================================
 local function hopStep(now)
     if not hop.active then return end
-    local root = hop.root
-    if not root or not root.Parent then
+    local model = hop.model
+    if not model or not model.Parent then
         hop.active = false
         return
     end
+
     local t = math.clamp((now - hop.start) / hop.dur, 0, 1)
     local want = hop.height * 4 * (t - t * t)
-    local dy = want - hop.lastOffset
-    hop.lastOffset = want
-    if dy ~= 0 then
-        pcall(function() root.CFrame = root.CFrame + Vector3.new(0, dy, 0) end)
+    hop.lastWant = want
+
+    local ok, piv = pcall(function() return model:GetPivot() end)
+    if not ok then
+        hop.active = false
+        return
     end
+
+    local py = piv.Position.Y
+    if py < hop.baseY or math.abs(py - hop.baseY) < 0.2 then
+        hop.baseY = py
+    end
+
+    pcall(function() model:PivotTo(piv + Vector3.new(0, want, 0)) end)
     if t >= 1 then hop.active = false end
 end
 
+local renderBound = false
+if typeof(RunService.BindToRenderStep) == "function" then
+    renderBound = pcall(function()
+        RunService:BindToRenderStep("SleepHop", 2000, function()
+            if dead or not hop.active then return end
+            hopStep(os.clock())
+        end)
+    end)
+end
+
+--==============================================================
+--  ДРАЙВЕР
+--==============================================================
 local function attemptJump(now)
     local char = myChar()
     if not char then lastState = "нет персонажа" return false end
     local root = rootOf(char)
     if not root then lastState = "нет корня" return false end
 
-    if bh.mode == "auto" or bh.mode == "hum" then
+    local mode = (bh.mode == "auto") and "hum" or bh.mode
+
+    if mode == "hum" then
         local hum = humOf(char)
         if hum and hum.Health > 0 then
             pcall(function() hum.Jump = true end)
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
         end
-    end
-
-    fireJump()
-
-    if bh.mode == "vel" or bh.mode == "hop" then
+        fireJump()
+    elseif mode == "vel" then
+        fireJump()
         if root.Anchored then pcall(function() root.Anchored = false end) end
-        if bh.mode == "vel" then
-            local v = root.AssemblyLinearVelocity
-            pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, 52, v.Z) end)
-        else
-            hop.active = true
-            hop.start = now
-            hop.lastOffset = 0
-            hop.root = root
-        end
+        local v = root.AssemblyLinearVelocity
+        pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, 55, v.Z) end)
+    elseif mode == "remote" then
+        fireRemotes()
+        fireAttributes(char)
+    elseif mode == "hop" then
+        hop.active = true
+        hop.start = now
+        hop.lastWant = 0
+        hop.baseY = root.Position.Y
+        hop.model = char
     end
 
     bh.pending = now
     bh.lastY = root.Position.Y
     bh.peak = 0
     jumpCount += 1
-    lastState = "прыжок/" .. bh.mode
+    lastState = "прыжок/" .. mode
     return true
 end
 
@@ -1554,12 +1649,12 @@ track(RunService.RenderStepped:Connect(function()
     end
 
     local now = os.clock()
-    hopStep(now)
+    if not renderBound then hopStep(now) end
+    scanChannels(false)
 
     local char = myChar()
     local root = char and rootOf(char)
 
-    -- оценка предыдущей попытки
     if bh.pending > 0 and root then
         local dy = root.Position.Y - bh.lastY
         if dy > bh.peak then bh.peak = dy end
@@ -1570,14 +1665,26 @@ track(RunService.RenderStepped:Connect(function()
                 if bh.mode == "auto" or bh.mode == "hum" then
                     bh.humFails += 1
                     if bh.humFails >= 2 then
-                        bh.mode = "vel"
-                        lastState = "переход: скорость"
+                        bh.mode = root.Anchored and ((#jumpRemotes > 0) and "remote" or "hop") or "vel"
+                        lastState = "переход: " .. bh.mode
                     end
                 elseif bh.mode == "vel" then
                     bh.velFails += 1
                     if bh.velFails >= 3 then
+                        bh.mode = (#jumpRemotes > 0) and "remote" or "hop"
+                        lastState = "переход: " .. bh.mode
+                    end
+                elseif bh.mode == "remote" then
+                    bh.remoteFails += 1
+                    if bh.remoteFails >= 3 then
                         bh.mode = "hop"
-                        lastState = "переход: подброс"
+                        lastState = "переход: hop"
+                    end
+                elseif bh.mode == "hop" then
+                    bh.hopFails += 1
+                    if bh.hopFails >= 3 then
+                        hop.height = math.min(hop.height + 3, 16)
+                        lastState = "высота " .. string.format("%.1f", hop.height)
                     end
                 end
             else
@@ -1668,16 +1775,36 @@ if not SkinsFolder then
     end)
 end
 
-local KNIFE_WORDS = { "knife", "karambit", "bayonet", "lightsaber" }
+local KNIFE_WORDS = {
+    "knife", "karambit", "bayonet", "lightsaber", "dagger", "talon", "butterfly",
+    "falchion", "bowie", "stiletto", "ursus", "nomad", "skeleton", "paracord",
+    "survival", "huntsman", "navaja", "flip", "gut", "m9", "shadow", "classic",
+}
+local GLOVE_WORDS = { "glove", "hands", "wraps", "arm" }
+local PISTOL_WORDS = { "pistol", "glock", "usp", "p250", "deagle", "desert", "revolver", "tec", "five", "cz", "dual", "beretta" }
+local RIFLE_WORDS = { "rifle", "ak", "m4", "famas", "galil", "aug", "scar", "sg" }
+local SMG_WORDS = { "smg", "mp", "p90", "ump", "mac", "bizon" }
+local SHOT_WORDS = { "shotgun", "nova", "xm", "sawed", "mag" }
+local SNIPE_WORDS = { "sniper", "awp", "ssg", "scout", "g3sg" }
 
-local function isKnife(name)
-    if type(name) ~= "string" then return false end
-    local low = string.lower(name)
-    if low:find("zeus", 1, true) then return false end
-    for _, w in ipairs(KNIFE_WORDS) do
+local function hasWord(low, words)
+    for _, w in ipairs(words) do
         if low:find(w, 1, true) then return true end
     end
     return false
+end
+
+local function categoryOf(name)
+    if type(name) ~= "string" then return "other" end
+    local low = string.lower(name)
+    if hasWord(low, KNIFE_WORDS) then return "knife" end
+    if hasWord(low, GLOVE_WORDS) then return "gloves" end
+    if hasWord(low, PISTOL_WORDS) then return "pistol" end
+    if hasWord(low, RIFLE_WORDS) then return "rifle" end
+    if hasWord(low, SMG_WORDS) then return "smg" end
+    if hasWord(low, SHOT_WORDS) then return "shotgun" end
+    if hasWord(low, SNIPE_WORDS) then return "sniper" end
+    return "other"
 end
 
 local WEAR_ORDER = { "Factory New", "Minimal Wear", "Field-Tested", "Well-Worn", "Battle-Scarred" }
@@ -1702,21 +1829,31 @@ local function skinWorks(skin)
     return false
 end
 
-local function knifeList()
+local weaponCache = nil
+
+local function weaponList()
+    if weaponCache then return weaponCache end
     local out = {}
     if SkinsFolder then
         for _, f in ipairs(SkinsFolder:GetChildren()) do
-            if isKnife(f.Name) then table.insert(out, f.Name) end
+            if f:IsA("Folder") and not f.Name:find("PATTERN") then
+                local has = false
+                for _, s in ipairs(f:GetChildren()) do
+                    if s:IsA("Folder") and skinWorks(s) then has = true break end
+                end
+                if has then table.insert(out, f.Name) end
+            end
         end
     end
     table.sort(out)
+    weaponCache = out
     return out
 end
 
-local function skinList(knife)
+local function skinList(weapon)
     local out = {}
-    if not SkinsFolder or not knife then return out end
-    local f = SkinsFolder:FindFirstChild(knife)
+    if not SkinsFolder or not weapon then return out end
+    local f = SkinsFolder:FindFirstChild(weapon)
     if not f then return out end
     for _, s in ipairs(f:GetChildren()) do
         if s:IsA("Folder") and skinWorks(s) then table.insert(out, s.Name) end
@@ -1725,21 +1862,41 @@ local function skinList(knife)
     return out
 end
 
-local function knifeViewmodels()
-    local out = {}
-    local c = camera or Workspace.CurrentCamera
-    if not c then return out end
-    for _, o in ipairs(c:GetChildren()) do
-        if o:IsA("Model") and isKnife(o.Name) and o:FindFirstChild("Weapon") then
-            out[#out + 1] = o
-        end
-    end
-    return out
+local function matchesName(vmName, weapon)
+    if not weapon or not vmName then return false end
+    return vmName == weapon
+        or vmName:find(weapon, 1, true) ~= nil
+        or weapon:find(vmName, 1, true) ~= nil
 end
 
-local function applySkinTo(vm, knife, skin)
+local function skinTargets(weapon)
+    local cat = categoryOf(weapon)
+    local out = {}
+    local cam = camera or Workspace.CurrentCamera
+    if cam then
+        for _, o in ipairs(cam:GetChildren()) do
+            if o:IsA("Model") then
+                if cat == "gloves" then
+                    local n = string.lower(o.Name)
+                    if n:find("glove", 1, true) or n:find("arm", 1, true) or n:find("hand", 1, true) then
+                        out[#out + 1] = o
+                    end
+                elseif matchesName(o.Name, weapon) then
+                    out[#out + 1] = o
+                end
+            end
+        end
+    end
+    if cat == "gloves" then
+        local ch = myChar()
+        if ch then out[#out + 1] = ch end
+    end
+    return out, cat
+end
+
+local function applySkinTo(vm, weapon, skin)
     if not SkinsFolder or not vm then return false end
-    local folder = SkinsFolder:FindFirstChild(knife)
+    local folder = SkinsFolder:FindFirstChild(weapon)
     if not folder then return false end
     local skinObj = folder:FindFirstChild(skin)
     if not skinObj then return false end
@@ -1760,28 +1917,63 @@ local function applySkinTo(vm, knife, skin)
             end
         end
     end
+
+    if touched == 0 then
+        local first
+        for _, sa in ipairs(wear:GetChildren()) do
+            if sa:IsA("SurfaceAppearance") then first = sa break end
+        end
+        if first then
+            for _, p in ipairs(vm:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    local n = string.lower(p.Name)
+                    if n:find("arm", 1, true) or n:find("hand", 1, true) or n:find("glove", 1, true) then
+                        local old = p:FindFirstChildOfClass("SurfaceAppearance")
+                        if old then pcall(function() old:Destroy() end) end
+                        local clone = first:Clone()
+                        clone.Name = "SurfaceAppearance"
+                        clone.Parent = p
+                        touched += 1
+                    end
+                end
+            end
+        end
+    end
+
     return touched > 0
 end
 
 local function applySkin()
-    if not S.knife or not S.skin then return false end
+    if not S.weapon or not S.skin then return false end
+    local targets = skinTargets(S.weapon)
     local ok = false
-    for _, vm in ipairs(knifeViewmodels()) do
-        if applySkinTo(vm, S.knife, S.skin) then ok = true end
+    for _, vm in ipairs(targets) do
+        if applySkinTo(vm, S.weapon, S.skin) then ok = true end
     end
     return ok
 end
 
 local function resetSkins()
-    for _, vm in ipairs(knifeViewmodels()) do
-        for _, d in ipairs(vm:GetDescendants()) do
+    local cam = camera or Workspace.CurrentCamera
+    if cam then
+        for _, vm in ipairs(cam:GetChildren()) do
+            if vm:IsA("Model") then
+                for _, d in ipairs(vm:GetDescendants()) do
+                    if d:IsA("SurfaceAppearance") then pcall(function() d:Destroy() end) end
+                end
+            end
+        end
+    end
+    local ch = myChar()
+    if ch then
+        for _, d in ipairs(ch:GetDescendants()) do
             if d:IsA("SurfaceAppearance") then pcall(function() d:Destroy() end) end
         end
     end
 end
 
 --==============================================================
---  ПОДМЕНА МОДЕЛИ НОЖА
+--  ПОДМЕНА МОДЕЛИ
 --==============================================================
 local hookedEngine = false
 local origWeaponNew, origGetCameraModel
@@ -1803,8 +1995,9 @@ local function installEngineHooks()
     local ok1 = pcall(function()
         origWeaponNew = WeaponComponent.new
         WeaponComponent.new = function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, ...)
-            if S.swapKnife and S.knife and p1 == lp and engineAlive() and isKnife(p5) then
-                return origWeaponNew(p1, p2, p3, p4, S.knife, S.skin or "Vanilla", 0.001, p8, p9, p10, p11, p12, ...)
+            if S.swapWeapon and S.weapon and p1 == lp and engineAlive()
+                and categoryOf(p5) == categoryOf(S.weapon) then
+                return origWeaponNew(p1, p2, p3, p4, S.weapon, S.skin or "Vanilla", 0.001, p8, p9, p10, p11, p12, ...)
             end
             return origWeaponNew(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, ...)
         end
@@ -1813,9 +2006,10 @@ local function installEngineHooks()
     local ok2 = pcall(function()
         origGetCameraModel = SkinsLib.GetCameraModel
         SkinsLib.GetCameraModel = function(weaponName, skinName, float, statTrack, nameTag, charm, stickers, team)
-            if S.swapKnife and S.knife and isKnife(weaponName) and engineAlive() then
-                local model = origGetCameraModel(S.knife, S.skin or "Vanilla", 0.001, statTrack, nameTag, charm, stickers, team)
-                if model then model.Name = S.knife end
+            if S.swapWeapon and S.weapon and engineAlive()
+                and categoryOf(weaponName) == categoryOf(S.weapon) then
+                local model = origGetCameraModel(S.weapon, S.skin or "Vanilla", 0.001, statTrack, nameTag, charm, stickers, team)
+                if model then model.Name = S.weapon end
                 return model
             end
             return origGetCameraModel(weaponName, skinName, float, statTrack, nameTag, charm, stickers, team)
@@ -1834,8 +2028,8 @@ end
 
 task.spawn(function()
     while not dead and task.wait(0.5) do
-        if S.swapKnife then installEngineHooks() end
-        if S.holdSkin and S.skin and S.knife then applySkin() end
+        if S.swapWeapon then installEngineHooks() end
+        if S.holdSkin and S.skin and S.weapon then applySkin() end
     end
 end)
 
@@ -1850,8 +2044,12 @@ local function diagnose()
     table.insert(out, "hum: " .. tostring(myHum()))
     table.insert(out, "state: " .. tostring(lastState))
     table.insert(out, "режим: " .. bh.mode .. " интервал: " .. string.format("%.2f", bh.interval))
+    table.insert(out, "каналов: " .. #jumpRemotes)
+    for _, r in ipairs(jumpRemotes) do table.insert(out, "  " .. r:GetFullName()) end
     table.insert(out, "rise: " .. string.format("%.2f", bh.peak))
     table.insert(out, "Прыжков: " .. tostring(jumpCount) .. " провалов: " .. tostring(failCount))
+    table.insert(out, "Оружие: " .. tostring(S.weapon) .. " / " .. tostring(S.skin))
+    table.insert(out, "Скинов в базе: " .. tostring(#weaponList()))
     local ch = myChar()
     local root = ch and rootOf(ch)
     if root then
@@ -1895,6 +2093,24 @@ local function dumpStructure()
     print("[SleepScript] СТРУКТУРА\n" .. text)
     if setclipboard then pcall(setclipboard, text) end
     notify("Структура скопирована")
+end
+
+local function dumpCamera()
+    local cam = camera or Workspace.CurrentCamera
+    if not cam then notify("Камеры нет") return end
+    local out = {}
+    for _, o in ipairs(cam:GetChildren()) do
+        if o:IsA("Model") then
+            table.insert(out, o.Name .. " [" .. o.ClassName .. "] kids=" .. #o:GetChildren())
+            for _, d in ipairs(o:GetDescendants()) do
+                if d:IsA("BasePart") then table.insert(out, "   " .. d.Name) end
+            end
+        end
+    end
+    local text = table.concat(out, "\n")
+    print("[SleepScript] КАМЕРА\n" .. text)
+    if setclipboard then pcall(setclipboard, text) end
+    notify("Дамп камеры скопирован")
 end
 
 --==============================================================
@@ -1953,16 +2169,23 @@ section(movePage, "бхоп")
 toggle(movePage, "Автобхоп", false, function(v)
     S.bhop = v
     bh.mode = S.unanchor and "vel" or "auto"
-    bh.humFails, bh.velFails = 0, 0
+    bh.humFails, bh.velFails, bh.remoteFails, bh.hopFails = 0, 0, 0, 0
     bh.nextAt = 0
     bh.pending = 0
+    if v then scanChannels(true) end
 end)
 toggle(movePage, "Только по пробелу", false, function(v) S.bhopKey = v end)
 slider(movePage, "Интервал", 18, 60, 33, function(v) bh.interval = v / 100 end)
 toggle(movePage, "Только скорость (без Humanoid)", false, function(v)
     S.unanchor = v
     bh.mode = v and "vel" or "auto"
-    bh.humFails, bh.velFails = 0, 0
+    bh.humFails, bh.velFails, bh.remoteFails, bh.hopFails = 0, 0, 0, 0
+end)
+button(movePage, "Найти каналы прыжка", function()
+    local n = scanChannels(true)
+    notify("Найдено каналов: " .. n)
+    print("[SleepScript] каналы прыжка:", n)
+    for _, r in ipairs(jumpRemotes) do print("  ", r:GetFullName()) end
 end)
 
 local dbgLabel = new("TextLabel", {
@@ -1986,8 +2209,8 @@ task.spawn(function()
             dbgLabel.Text = "бхоп выключен"
             continue
         end
-        dbgLabel.Text = string.format("режим:%s инт:%.2f подъём:%.1f прыжков:%d сбоев:%d %s",
-            bh.mode, bh.interval, bh.peak, jumpCount, failCount, lastState)
+        dbgLabel.Text = string.format("режим:%s инт:%.2f подъём:%.1f прыжков:%d сбоев:%d кан:%d %s",
+            bh.mode, bh.interval, bh.peak, jumpCount, failCount, #jumpRemotes, lastState)
     end
 end)
 
@@ -2005,34 +2228,90 @@ slider(movePage, "FOV", 40, 120, 90, function(v)
     applyFov()
 end)
 
-section(skinPage, "нож")
-local knifeBox = listBox(skinPage, 104)
-local skinBox = listBox(skinPage, 104)
+--==============================================================
+--  СТРАНИЦА СКИНОВ
+--==============================================================
+section(skinPage, "оружие и перчатки")
+chips(skinPage, {
+    { name = "Всё", value = "all" },
+    { name = "Ножи", value = "knife" },
+    { name = "Пистолеты", value = "pistol" },
+    { name = "Автоматы", value = "rifle" },
+    { name = "ПП", value = "smg" },
+    { name = "Дробовики", value = "shotgun" },
+    { name = "Снайперки", value = "sniper" },
+    { name = "Перчатки", value = "gloves" },
+}, "all", function(v)
+    skinCat = v
+    refreshWeapons()
+end, 4)
+
+local filterBox = new("TextBox", {
+    Size = UDim2.new(1, 0, 0, 26),
+    BackgroundColor3 = Color3.fromRGB(16, 16, 22),
+    BorderSizePixel = 0,
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    TextColor3 = Color3.fromRGB(220, 220, 232),
+    PlaceholderText = "поиск",
+    PlaceholderColor3 = Color3.fromRGB(110, 110, 128),
+    Text = "",
+    ClearTextOnFocus = false,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}, skinPage)
+new("UICorner", { CornerRadius = UDim.new(0, 7) }, filterBox)
+new("UIPadding", { PaddingLeft = UDim.new(0, 8) }, filterBox)
+
+local weaponBox = listBox(skinPage, 132)
+local skinBox = listBox(skinPage, 132)
 
 local function refreshSkins()
-    local list = skinList(S.knife)
+    local list = skinList(S.weapon)
     S.skin = list[1]
     fillList(skinBox, list, S.skin, function(v) S.skin = v end)
 end
 
-fillList(knifeBox, knifeList(), nil, function(name)
-    S.knife = name
-    refreshSkins()
+local function refreshWeapons()
+    local list = {}
+    local q = string.lower(filterBox.Text or "")
+    for _, name in ipairs(weaponList()) do
+        local okCat = skinCat == "all" or categoryOf(name) == skinCat
+        local okQ = q == "" or string.lower(name):find(q, 1, true) ~= nil
+        if okCat and okQ then list[#list + 1] = name end
+    end
+    fillList(weaponBox, list, S.weapon, function(name)
+        S.weapon = name
+        refreshSkins()
+    end)
+end
+
+filterBox:GetPropertyChangedSignal("Text"):Connect(refreshWeapons)
+
+refreshWeapons()
+refreshSkins()
+
+task.spawn(function()
+    for _ = 1, 60 do
+        if SkinsFolder or dead then break end
+        task.wait(0.5)
+    end
+    weaponCache = nil
+    if not dead then refreshWeapons() end
 end)
 
 section(skinPage, "скин")
 button(skinPage, "Применить скин", function()
-    if not S.knife then notify("Выбери нож") return end
+    if not S.weapon then notify("Выбери оружие") return end
     if not S.skin then notify("Выбери скин") return end
-    applySkin()
+    if applySkin() then notify("Скин применён") else notify("Не нашёл модель") end
 end)
 button(skinPage, "Сбросить скин", function()
     resetSkins()
-    notify("Скин сброшен")
+    notify("Скины сброшены")
 end)
 toggle(skinPage, "Держать скин", true, function(v) S.holdSkin = v end)
-toggle(skinPage, "Подменять модель ножа", false, function(v)
-    S.swapKnife = v
+toggle(skinPage, "Подменять модель (по категории)", false, function(v)
+    S.swapWeapon = v
     if v then
         installEngineHooks()
         notify(hookedEngine and "Подмена включена" or "Хуки недоступны")
@@ -2045,6 +2324,7 @@ section(miscPage, "служебное")
 button(miscPage, "Диагностика (F9)", diagnose)
 button(miscPage, "Дамп персонажа", dumpSelf)
 button(miscPage, "Дамп структуры", dumpStructure)
+button(miscPage, "Дамп моделей камеры", dumpCamera)
 button(miscPage, "Закрыть меню (Z)", function() closeMenu() end)
 button(miscPage, "Выгрузить скрипт", function()
     if env.SleepScript then env.SleepScript.Unload() end
@@ -2078,6 +2358,7 @@ local function unload()
     if hookedIndex and origIndex then pcall(function() hookmetamethod(game, "__index", origIndex) end) end
     if hookedNamecall and origNamecall then pcall(function() hookmetamethod(game, "__namecall", origNamecall) end) end
     removeEngineHooks()
+    if renderBound then pcall(function() RunService:UnbindFromRenderStep("SleepHop") end) end
     if camera then pcall(function() camera.FieldOfView = fovOriginal end) end
     pcall(function() blur:Destroy() end)
     pcall(function() gui:Destroy() end)
