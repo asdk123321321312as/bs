@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "1.9",
+    Version   = "2.0",
 }
 
 if getgenv().SleepScript then pcall(function() getgenv().SleepScript.Unload() end) end
@@ -26,35 +26,17 @@ local lp                = Players.LocalPlayer
 local S = {
     espEnabled = false,
     simpleMode = false,
-    ghostTime = 9,
     style = "corner",
-    boxSource = "auto",
     thickness = 1,
-    cornerSize = 9,
-    textSize = 13,
     showDist = true,
-    distUnit = "m",
     hpMode = "bar",
-    tracer = false,
-    skeleton = false,
-    headDot = false,
-    chams = false,
-    outline = true,
-    smooth = true,
-    visCheck = true,
     teamCheck = true,
     showBots = true,
     showLocal = false,
-    nameMode = "name",
     maxDist = 2000,
     colorStatic = Color3.fromRGB(235, 235, 245),
     colorHidden = Color3.fromRGB(195, 195, 210),
-    colorTracer = Color3.fromRGB(140, 110, 255),
-    colorMode = "static",
     bhop = false,
-    bhopForce = true,
-    bhopGround = true,
-    bhopDelay = 0,
     noAirSpread = false,
     fovEnabled = false,
     fovValue = 90,
@@ -63,6 +45,10 @@ local S = {
     swapKnife = false,
     holdSkin = true,
 }
+
+local TEXT_SIZE = 13
+local CORNER_SIZE = 9
+local GHOST_TIME = 9
 
 local selfRead = false
 local connections = {}
@@ -99,14 +85,6 @@ local function rootOf(char)
         or char.PrimaryPart
 end
 
-local function feetOf(char)
-    if not char then return nil end
-    return char:FindFirstChild("LeftFoot") or char:FindFirstChild("RightFoot")
-        or char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("RightLowerLeg")
-        or char:FindFirstChild("Left Leg") or char:FindFirstChild("Right Leg")
-end
-
--- обход всех контейнеров, где игра может держать персонажей
 local function eachCandidate(cb)
     local folder = charsFolder()
     if folder then
@@ -161,9 +139,7 @@ local function refreshOwners()
     pcall(function()
         eachCandidate(function(m)
             local owner = ownerFromAttributes(m)
-            if not owner then
-                owner = Players:FindFirstChild(m.Name)
-            end
+            if not owner then owner = Players:FindFirstChild(m.Name) end
             if not owner then
                 for _, p in ipairs(plrs) do
                     if #p.Name > 2 and m.Name:find(p.Name, 1, true) then
@@ -845,7 +821,7 @@ local function fillList(list, items, current, cb)
 end
 
 --==============================================================
---  ГЕОМЕТРИЯ ЦЕЛИ
+--  ГЕОМЕТРИЯ
 --==============================================================
 local BLOCKED_PARTS = {
     HumanoidRootPart = true, RootPart = true, Root = true,
@@ -878,31 +854,31 @@ local function visualFor(char, owner)
     return nil
 end
 
-local function collectParts(model, anchorPos, onlyMesh)
-    local out = {}
+local function buildBounds(model, root)
+    local anchorPos = root and root.Position
+    local parts = {}
     for _, d in ipairs(model:GetDescendants()) do
         if d:IsA("BasePart") and d.Transparency < 0.95 and not BLOCKED_PARTS[d.Name] then
             local mag = d.Size.Magnitude
-            if mag > 0 and mag <= 16 then
-                local ok = true
-                if anchorPos and (d.Position - anchorPos).Magnitude > 6 then ok = false end
-                if ok and onlyMesh then
-                    if not (d:IsA("MeshPart") or d:FindFirstChildOfClass("SpecialMesh")) then ok = false end
-                end
-                if ok then
-                    out[#out + 1] = d
-                    if #out >= 60 then break end
-                end
+            if mag > 0 and mag <= 16 and (not anchorPos or (d.Position - anchorPos).Magnitude <= 6) then
+                parts[#parts + 1] = d
+                if #parts >= 60 then break end
             end
         end
     end
-    return out
-end
+    if #parts == 0 then return nil end
 
-local function boundsFrom(parts, anchorPos)
+    local anchorPart, bestVol = nil, 0
+    for _, p in ipairs(parts) do
+        local v = p.Size.X * p.Size.Y * p.Size.Z
+        if v > bestVol then anchorPart, bestVol = p, v end
+    end
+    if not anchorPart then return nil end
+    local ap = anchorPart.Position
+
     local mn, mx
     for _, p in ipairs(parts) do
-        if (p.Position - anchorPos).Magnitude <= 4.5 then
+        if (p.Position - ap).Magnitude <= 4.5 then
             local a, b = p.Position - p.Size * 0.5, p.Position + p.Size * 0.5
             if mn then
                 mn = Vector3.new(math.min(mn.X, a.X), math.min(mn.Y, a.Y), math.min(mn.Z, a.Z))
@@ -913,21 +889,6 @@ local function boundsFrom(parts, anchorPos)
         end
     end
     return mn, mx
-end
-
-local function buildBounds(model, root)
-    local anchorPos = root and root.Position
-    local parts = collectParts(model, anchorPos, true)
-    if #parts == 0 then parts = collectParts(model, anchorPos, false) end
-    if #parts == 0 then return nil end
-
-    local anchorPart, bestVol = nil, 0
-    for _, p in ipairs(parts) do
-        local v = p.Size.X * p.Size.Y * p.Size.Z
-        if v > bestVol then anchorPart, bestVol = p, v end
-    end
-    if not anchorPart then return nil end
-    return boundsFrom(parts, anchorPart.Position)
 end
 
 local function projectBounds(cam, mn, mx)
@@ -963,22 +924,8 @@ local function sq(filled)
     return o
 end
 
-local SKEL = {
-    R15 = {
-        { "Head", "UpperTorso" }, { "UpperTorso", "LowerTorso" },
-        { "UpperTorso", "LeftUpperArm" }, { "LeftUpperArm", "LeftLowerArm" }, { "LeftLowerArm", "LeftHand" },
-        { "UpperTorso", "RightUpperArm" }, { "RightUpperArm", "RightLowerArm" }, { "RightLowerArm", "RightHand" },
-        { "LowerTorso", "LeftUpperLeg" }, { "LeftUpperLeg", "LeftLowerLeg" }, { "LeftLowerLeg", "LeftFoot" },
-        { "LowerTorso", "RightUpperLeg" }, { "RightUpperLeg", "RightLowerLeg" }, { "RightLowerLeg", "RightFoot" },
-    },
-    R6 = {
-        { "Head", "Torso" }, { "Torso", "Left Arm" }, { "Torso", "Right Arm" },
-        { "Torso", "Left Leg" }, { "Torso", "Right Leg" },
-    },
-}
-
 local function newRec()
-    local rec = { all = {}, corners = {}, bones = {} }
+    local rec = { all = {}, corners = {} }
     local function add(o) rec.all[#rec.all + 1] = o return o end
     rec.outline = add(sq(false))
     rec.box = add(sq(false))
@@ -987,10 +934,6 @@ local function newRec()
     rec.name = add(Drawing.new("Text"))
     rec.dist = add(Drawing.new("Text"))
     rec.hpText = add(Drawing.new("Text"))
-    rec.tracer = add(Drawing.new("Line"))
-    rec.dot = add(Drawing.new("Circle"))
-    rec.dot.Filled = true
-    rec.dot.Thickness = 1
     for _, t in ipairs({ rec.name, rec.dist, rec.hpText }) do
         t.Center = true
         t.Outline = true
@@ -998,11 +941,6 @@ local function newRec()
         t.OutlineColor = Color3.fromRGB(0, 0, 0)
     end
     for i = 1, 8 do rec.corners[i] = add(sq(false)) end
-    for i = 1, 14 do
-        local l = add(Drawing.new("Line"))
-        l.Thickness = 1
-        rec.bones[i] = l
-    end
     return rec
 end
 
@@ -1036,16 +974,6 @@ rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater = true
 local visState, visClock = {}, {}
 
-local function colorFor(visible, frac, dist)
-    if not visible then return S.colorHidden end
-    if S.colorMode == "health" then
-        return Color3.fromRGB(230, 70, 70):Lerp(Color3.fromRGB(90, 220, 120), frac)
-    elseif S.colorMode == "distance" then
-        return Color3.fromRGB(90, 220, 120):Lerp(Color3.fromRGB(230, 70, 70), math.clamp(dist / S.maxDist, 0, 1))
-    end
-    return S.colorStatic
-end
-
 local function put(s, x, y, w, h, col)
     s.Color = col
     s.Thickness = S.thickness
@@ -1056,12 +984,8 @@ end
 
 local function drawBox(rec, x, y, w, h, col)
     local t = S.thickness
-    if S.outline then
-        put(rec.outline, x - 1, y - 1, w + 2, h + 2, Color3.fromRGB(0, 0, 0))
-        rec.outline.Thickness = t + 1
-    else
-        rec.outline.Visible = false
-    end
+    put(rec.outline, x - 1, y - 1, w + 2, h + 2, Color3.fromRGB(0, 0, 0))
+    rec.outline.Thickness = t + 1
 
     if S.style == "none" then
         rec.box.Visible = false
@@ -1078,7 +1002,7 @@ local function drawBox(rec, x, y, w, h, col)
         rec.box.Filled = false
         return
     end
-    local c = math.clamp(S.cornerSize, 3, math.min(w / 2, h / 2))
+    local c = math.clamp(CORNER_SIZE, 3, math.min(w / 2, h / 2))
     put(rec.corners[1], x, y, c, t, col)
     put(rec.corners[2], x, y, t, c, col)
     put(rec.corners[3], x + w - c, y, c, t, col)
@@ -1089,39 +1013,7 @@ local function drawBox(rec, x, y, w, h, col)
     put(rec.corners[8], x + w - t, y + h - c, t, c, col)
 end
 
-local function drawSkeleton(rec, cam, char, hum, col)
-    local set = SKEL[(hum and hum.RigType == Enum.HumanoidRigType.R6) and "R6" or "R15"]
-    local i = 0
-    for _, pair in ipairs(set) do
-        local a = char:FindFirstChild(pair[1])
-        local b = char:FindFirstChild(pair[2])
-        if a and b then
-            local pa, onA = cam:WorldToViewportPoint(a.Position)
-            local pb, onB = cam:WorldToViewportPoint(b.Position)
-            if onA and onB then
-                i += 1
-                local line = rec.bones[i]
-                if line then
-                    line.From = Vector2.new(pa.X, pa.Y)
-                    line.To = Vector2.new(pb.X, pb.Y)
-                    line.Color = col
-                    line.Thickness = S.thickness
-                    line.Visible = true
-                end
-            end
-        end
-    end
-    for j = i + 1, #rec.bones do rec.bones[j].Visible = false end
-end
-
-local function labelFor(plr)
-    if not plr or S.nameMode == "off" then return nil end
-    if S.nameMode == "display" then return plr.DisplayName end
-    if S.nameMode == "both" then return plr.DisplayName .. " (" .. plr.Name .. ")" end
-    return plr.Name
-end
-
-local function drawTarget(rec, cam, camPos, cx, vp, char, geom, label, my, now, key)
+local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
     if not char or isDead(char) then hide(rec) return end
 
     local root = rootOf(char)
@@ -1135,18 +1027,14 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, geom, label, my, now, 
     rec.label = label
 
     local x, y, w, h, topPos
-
-    local mn, mx
-    if S.boxSource == "auto" then
-        mn, mx = buildBounds(geom or char, root)
-    end
+    local mn, mx = buildBounds(geom or char, root)
 
     if mn then
         local bx1, by1, bx2, by2 = projectBounds(cam, mn, mx)
         if not bx1 then hide(rec) return end
         local rawW, rawH = bx2 - bx1, by2 - by1
         if rawH > 0 and rawW > 0 and (rawH / rawW) < 9 then
-            if S.smooth and rec.lastH then
+            if rec.lastH then
                 rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.45
                 rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.45
             else
@@ -1164,13 +1052,10 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, geom, label, my, now, 
 
     if not mn then
         local head = char:FindFirstChild("Head")
-        local feet = feetOf(char)
         topPos = head
             and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.4, 0))
             or (root.Position + Vector3.new(0, 2.6, 0))
-        local botPos = feet
-            and (feet.Position - Vector3.new(0, feet.Size.Y * 0.5, 0))
-            or (root.Position - Vector3.new(0, 2.8, 0))
+        local botPos = root.Position - Vector3.new(0, 2.8, 0)
 
         local sTop, onTop = cam:WorldToViewportPoint(topPos)
         local sBot, onBot = cam:WorldToViewportPoint(botPos)
@@ -1180,7 +1065,7 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, geom, label, my, now, 
         end
         local rawH = sBot.Y - sTop.Y
         local rawW = rawH * 0.42
-        if S.smooth and rec.lastH then
+        if rec.lastH then
             rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.45
             rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.45
         else
@@ -1192,30 +1077,25 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, geom, label, my, now, 
         y = sTop.Y
     end
 
-    local visible = true
-    if S.visCheck then
-        if not visClock[key] or now - visClock[key] > 0.15 then
-            visClock[key] = now
-            local filter = { char }
-            if my and my ~= char then table.insert(filter, my) end
-            local camNow = camera or Workspace.CurrentCamera
-            if camNow then table.insert(filter, camNow) end
-            rayParams.FilterDescendantsInstances = filter
-            local hit = Workspace:Raycast(camPos, topPos - camPos, rayParams)
-            local ok = (hit == nil
-                or hit.Instance:IsDescendantOf(char)
-                or (camNow ~= nil and hit.Instance:IsDescendantOf(camNow)))
-            visState[key] = ok
-        end
-        visible = visState[key] ~= false
+    if not visClock[key] or now - visClock[key] > 0.15 then
+        visClock[key] = now
+        local filter = { char }
+        if my and my ~= char then table.insert(filter, my) end
+        local camNow = camera or Workspace.CurrentCamera
+        if camNow then table.insert(filter, camNow) end
+        rayParams.FilterDescendantsInstances = filter
+        local hit = Workspace:Raycast(camPos, topPos - camPos, rayParams)
+        visState[key] = (hit == nil
+            or hit.Instance:IsDescendantOf(char)
+            or (camNow ~= nil and hit.Instance:IsDescendantOf(camNow)))
     end
 
     local hum = char:FindFirstChildOfClass("Humanoid")
     local hp = hum and hum.Health or tonumber(char:GetAttribute("Health")) or 100
     local maxHp = hum and math.max(hum.MaxHealth, 1) or 100
     local frac = math.clamp(hp / maxHp, 0, 1)
+    local col = (visState[key] == false) and S.colorHidden or S.colorStatic
 
-    local col = colorFor(visible, frac, dist)
     drawBox(rec, x, y, w, h, col)
 
     if S.hpMode == "bar" then
@@ -1232,7 +1112,7 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, geom, label, my, now, 
         rec.hpBg.Visible = false
         rec.hp.Visible = false
         rec.hpText.Text = tostring(math.floor(hp))
-        rec.hpText.Size = S.textSize
+        rec.hpText.Size = TEXT_SIZE
         rec.hpText.Color = Color3.fromRGB(90, 220, 120):Lerp(Color3.fromRGB(230, 70, 70), 1 - frac)
         rec.hpText.Position = Vector2.new(x + w / 2, y + h + 3)
         rec.hpText.Visible = true
@@ -1244,59 +1124,26 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, geom, label, my, now, 
 
     if label then
         rec.name.Text = label
-        rec.name.Size = S.textSize
+        rec.name.Size = TEXT_SIZE
         rec.name.Color = col
-        rec.name.Position = Vector2.new(x + w / 2, y - S.textSize - 3)
+        rec.name.Position = Vector2.new(x + w / 2, y - TEXT_SIZE - 3)
         rec.name.Visible = true
     else
         rec.name.Visible = false
     end
 
     if S.showDist then
-        rec.dist.Text = (S.distUnit == "m")
-            and string.format("%d m", math.floor(dist / 3.5))
-            or string.format("%d st", math.floor(dist))
-        rec.dist.Size = S.textSize - 1
+        rec.dist.Text = string.format("%d m", math.floor(dist / 3.5))
+        rec.dist.Size = TEXT_SIZE - 1
         rec.dist.Color = col
         rec.dist.Position = Vector2.new(x + w / 2, y + h + (S.hpMode == "text" and 17 or 3))
         rec.dist.Visible = true
     else
         rec.dist.Visible = false
     end
-
-    if S.tracer then
-        rec.tracer.From = Vector2.new(cx, vp.Y)
-        rec.tracer.To = Vector2.new(x + w / 2, y + h)
-        rec.tracer.Color = S.colorTracer
-        rec.tracer.Thickness = S.thickness
-        rec.tracer.Visible = true
-    else
-        rec.tracer.Visible = false
-    end
-
-    if S.headDot then
-        local p, on = cam:WorldToViewportPoint(topPos)
-        if on then
-            rec.dot.Position = Vector2.new(p.X, p.Y)
-            rec.dot.Radius = math.clamp(h * 0.03, 2, 6)
-            rec.dot.Color = col
-            rec.dot.Visible = true
-        else
-            rec.dot.Visible = false
-        end
-    else
-        rec.dot.Visible = false
-    end
-
-    if S.skeleton then
-        drawSkeleton(rec, cam, char, hum, col)
-    else
-        for i = 1, #rec.bones do rec.bones[i].Visible = false end
-    end
 end
 
--- рамка на последней известной позиции
-local function drawGhost(rec, cam, camPos, pos, label, now)
+local function drawGhost(rec, cam, camPos, pos, label)
     local mn = pos + Vector3.new(-0.85, -2.7, -0.85)
     local mx = pos + Vector3.new(0.85, 2.5, 0.85)
     local bx1, by1, bx2, by2 = projectBounds(cam, mn, mx)
@@ -1312,20 +1159,16 @@ local function drawGhost(rec, cam, camPos, pos, label, now)
     rec.hpBg.Visible = false
     rec.hp.Visible = false
     rec.hpText.Visible = false
-    rec.tracer.Visible = false
-    rec.dot.Visible = false
-    for i = 1, #rec.bones do rec.bones[i].Visible = false end
 
     rec.name.Text = (label or "?") .. " · last"
-    rec.name.Size = S.textSize
+    rec.name.Size = TEXT_SIZE
     rec.name.Color = col
-    rec.name.Position = Vector2.new(x + w / 2, y - S.textSize - 3)
+    rec.name.Position = Vector2.new(x + w / 2, y - TEXT_SIZE - 3)
     rec.name.Visible = true
 
     if S.showDist then
-        local dist = (camPos - pos).Magnitude
-        rec.dist.Text = string.format("%d m", math.floor(dist / 3.5))
-        rec.dist.Size = S.textSize - 1
+        rec.dist.Text = string.format("%d m", math.floor((camPos - pos).Magnitude / 3.5))
+        rec.dist.Size = TEXT_SIZE - 1
         rec.dist.Color = col
         rec.dist.Position = Vector2.new(x + w / 2, y + h + 3)
         rec.dist.Visible = true
@@ -1356,8 +1199,6 @@ local function frameUpdate()
     if not cam then return end
 
     local camPos = cam.CFrame.Position
-    local vp = cam.ViewportSize
-    local cx = vp.X / 2
     local now = os.clock()
     local my = myChar()
     local myTeam = teamOf(lp)
@@ -1380,16 +1221,14 @@ local function frameUpdate()
             hide(rec)
             rec.lastPos = nil
         else
-            local label = owner and labelFor(owner) or "BOT"
-            local geom = visualFor(model, owner)
-            drawTarget(rec, cam, camPos, cx, vp, model, geom, label, my, now, model)
+            drawTarget(rec, cam, camPos, model, visualFor(model, owner), owner and owner.Name or "BOT", my, now, model)
         end
     end
 
     for model, rec in pairs(recs) do
         if not targets[model] then
-            if rec.lastPos and (now - (rec.lastSeen or 0)) < (S.ghostTime or 9) then
-                drawGhost(rec, cam, camPos, rec.lastPos, rec.label, now)
+            if rec.lastPos and (now - (rec.lastSeen or 0)) < GHOST_TIME then
+                drawGhost(rec, cam, camPos, rec.lastPos, rec.label)
             else
                 dropRec(model)
                 visState[model] = nil
@@ -1467,7 +1306,7 @@ local function updateGuiEsp()
             txt.Size = UDim2.fromScale(1, 1)
             txt.BackgroundTransparency = 1
             txt.Font = Enum.Font.GothamBold
-            txt.TextSize = S.textSize
+            txt.TextSize = TEXT_SIZE
             txt.TextColor3 = S.colorStatic
             txt.TextStrokeTransparency = 0.4
             txt.Parent = bg
@@ -1480,7 +1319,7 @@ local function updateGuiEsp()
         t.hl.OutlineColor = S.colorStatic
         t.bg.Adornee = geom
         t.txt.TextColor3 = S.colorStatic
-        t.txt.Text = labelFor(owner) or "BOT"
+        t.txt.Text = owner and owner.Name or "BOT"
     end
 end
 
@@ -1491,245 +1330,46 @@ task.spawn(function()
 end)
 
 --==============================================================
---  ЧЕЙМСЫ
---==============================================================
-local chams = {}
-
-local function updateChams()
-    if not S.chams or not S.espEnabled then
-        for m, h in pairs(chams) do pcall(function() h:Destroy() end) end
-        chams = {}
-        return
-    end
-
-    local my = myChar()
-    local myTeam = teamOf(lp)
-    local wanted = {}
-
-    for m in pairs(targets) do
-        if m.Parent and m ~= my and not isDead(m) then
-            local owner = modelOwner[m]
-            local ok = true
-            if owner == lp then
-                ok = false
-            elseif not owner then
-                if not S.showBots then ok = false end
-            elseif S.teamCheck and myTeam then
-                local t = teamOfModel(m, owner)
-                if t and t == myTeam then ok = false end
-            end
-            if ok then wanted[m] = true end
-        end
-    end
-
-    for m, h in pairs(chams) do
-        if not wanted[m] or not m.Parent then
-            pcall(function() h:Destroy() end)
-            chams[m] = nil
-        end
-    end
-
-    for m in pairs(wanted) do
-        local h = chams[m]
-        if not h then
-            h = Instance.new("Highlight")
-            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            h.FillTransparency = 0.72
-            h.OutlineTransparency = 0
-            h.Parent = gui
-            h.Adornee = m
-            chams[m] = h
-        end
-        h.FillColor = S.colorStatic
-        h.OutlineColor = S.colorStatic
-    end
-end
-
-task.spawn(function()
-    while task.wait(0.25) do
-        pcall(updateChams)
-    end
-end)
-
---==============================================================
 --  АВТОБХОП
 --==============================================================
 local lastJump = 0
 local jumpCount = 0
-local pressBusy = false
-local lowVySince = 0
-local lastWhy = "-"
-local ownerTried = false
-local holdUntil = 0
-local checkAt = 0
-local attemptY = 0
-local groundY = nil
-local inAir = false
+local lastState = "-"
 
-local hop = { active = false, start = 0, dur = 0.45, height = 5.5, lastOffset = 0, root = nil }
-
-local PROBE_DIRS = {
-    Vector3.new(0, 0, 0),
-    Vector3.new(1.1, 0, 0),
-    Vector3.new(-1.1, 0, 0),
-    Vector3.new(0, 0, 1.1),
-    Vector3.new(0, 0, -1.1),
-    Vector3.new(0.8, 0, 0.8),
-    Vector3.new(-0.8, 0, -0.8),
-}
-
-local function surfaceBelow(char)
-    if not char then return false end
-    local probes = {}
-    local feet = feetOf(char)
-    local root = rootOf(char)
-    if feet then table.insert(probes, { feet.Position, 3 }) end
-    if root then table.insert(probes, { root.Position, 7 }) end
-    if #probes == 0 then return false end
-
-    groundParams.FilterDescendantsInstances = { char }
-    for _, p in ipairs(probes) do
-        for _, off in ipairs(PROBE_DIRS) do
-            if Workspace:Raycast(p[1] + off, Vector3.new(0, -p[2], 0), groundParams) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-local function grounded(char, hum, root, now, vy)
-    if hum and not S.noAirSpread then
-        local f = hum.FloorMaterial
-        if f and f ~= Enum.Material.Air then return true, "floor" end
-        local st = hum:GetState()
-        if st == Enum.HumanoidStateType.Landed or st == Enum.HumanoidStateType.RunningNoPhysics
-            or st == Enum.HumanoidStateType.Climbing then
-            return true, "state"
-        end
-    end
-    if surfaceBelow(char) then return true, "ray" end
-    if math.abs(vy) < 3 and lowVySince > 0 and (now - lowVySince) > 0.12 then return true, "settled" end
-    return false, "air"
-end
-
-local function pressSpace()
-    if pressBusy then return end
-    pressBusy = true
-
-    local keyed = false
-    if typeof(keypress) == "function" then
-        keyed = pcall(keypress, Enum.KeyCode.Space)
-    end
-    if not keyed then
-        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false) end)
-        task.delay(0.04, function()
-            pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false) end)
-        end)
-    end
-    task.delay(0.05, function() pressBusy = false end)
-end
-
-local function doJump(char, root, hum)
-    if hum then
-        pcall(function() hum.Jump = true end)
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-    end
-    pressSpace()
-
-    if root.Anchored then return end
-    if not ownerTried then
-        ownerTried = true
-        pcall(function() root:SetNetworkOwner(lp) end)
-    end
-    pcall(function()
-        local v = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 60), v.Z)
-    end)
-end
-
-local function hopStep(now)
-    if not hop.active then return end
-    local root = hop.root
-    if not root or not root.Parent then
-        hop.active = false
-        return
-    end
-    local t = math.clamp((now - hop.start) / hop.dur, 0, 1)
-    local want = hop.height * 4 * (t - t * t)
-    local dy = want - hop.lastOffset
-    hop.lastOffset = want
-    if dy ~= 0 then
-        pcall(function() root.CFrame = root.CFrame + Vector3.new(0, dy, 0) end)
-    end
-    if t >= 1 then hop.active = false end
+-- реальное состояние в обход хука noAirSpread
+local function realState(hum)
+    selfRead = true
+    local ok, st = pcall(function() return hum:GetState() end)
+    selfRead = false
+    if ok then return st end
+    return nil
 end
 
 track(RunService.RenderStepped:Connect(function()
-    if not S.bhop then
-        hop.active = false
-        inAir = false
-        groundY = nil
+    if not S.bhop then return end
+    if not UIS:IsKeyDown(Enum.KeyCode.Space) then
+        lastState = "no key"
         return
     end
 
-    local now = os.clock()
-    hopStep(now)
-
     local char = myChar()
-    if not char then lastWhy = "no char" return end
-    local root = rootOf(char)
-    if not root then lastWhy = "no root" return end
+    if not char then lastState = "no char" return end
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum and hum.Health <= 0 then lastWhy = "dead" return end
+    if not hum or hum.Health <= 0 then lastState = "no hum" return end
 
-    local vy = root.AssemblyLinearVelocity.Y
-    if math.abs(vy) < 3 then
-        if lowVySince == 0 then lowVySince = now end
-    else
-        lowVySince = 0
+    local st = realState(hum)
+    if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
+        lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
+        return
     end
+    lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
 
-    if now < holdUntil and hum then
-        pcall(function() hum.Jump = true end)
-    end
-
-    if checkAt > 0 and now >= checkAt then
-        checkAt = 0
-        if root.Position.Y < attemptY + 0.8 then
-            hop.active = true
-            hop.start = now
-            hop.lastOffset = 0
-            hop.root = root
-            lastWhy = "cframe hop"
-        else
-            lastWhy = "game jump"
-        end
-    end
-
-    if not UIS:IsKeyDown(Enum.KeyCode.Space) then lastWhy = "no key" return end
-
-    local isGround, why = grounded(char, hum, root, now, vy)
-    lastWhy = why
-
-    if not inAir then groundY = root.Position.Y end
-    if groundY then
-        local dy = root.Position.Y - groundY
-        if dy > 1.2 then inAir = true end
-        if inAir and dy < 0.35 then inAir = false end
-    end
-
-    if inAir then return end
-    if not isGround and S.bhopGround then return end
-    if (now - lastJump) < 0.2 then return end
-    if (now - lastJump) < ((S.bhopDelay or 0) / 1000) then return end
+    local now = os.clock()
+    if now - lastJump < 0.06 then return end
 
     lastJump = now
     jumpCount += 1
-    attemptY = root.Position.Y
-    checkAt = now + 0.12
-    holdUntil = now + 0.14
-    doJump(char, root, hum)
+    pcall(function() hum.Jump = true end)
 end))
 
 --==============================================================
@@ -1960,89 +1600,42 @@ end)
 --==============================================================
 --  ДИАГНОСТИКА
 --==============================================================
-local function dumpStructure()
-    local out = {}
-    local function list(label, parent)
-        table.insert(out, label .. ":")
-        local n = 0
-        for _, c in ipairs(parent:GetChildren()) do
-            n += 1
-            if n > 60 then
-                table.insert(out, "  ...")
-                break
-            end
-            local extra = ""
-            if c:IsA("Folder") or c:IsA("Model") then
-                extra = " kids=" .. tostring(#c:GetChildren())
-            end
-            table.insert(out, "  " .. c.Name .. " [" .. c.ClassName .. "]" .. extra)
-        end
-    end
-    list("Workspace", Workspace)
-    local cam = camera or Workspace.CurrentCamera
-    if cam then list("Camera", cam) end
-    local text = table.concat(out, "\n")
-    print("[SleepScript] СТРУКТУРА\n" .. text)
-    if setclipboard then pcall(setclipboard, text) end
-    notify("Структура скопирована")
-end
-
-local function dumpNearest()
-    local best, bestD = nil, math.huge
-    local cam = camera or Workspace.CurrentCamera
-    local camPos = cam and cam.CFrame.Position or Vector3.zero
-    for m in pairs(targets) do
-        if m.Parent and modelOwner[m] ~= lp then
-            local r = rootOf(m)
-            if r then
-                local d = (r.Position - camPos).Magnitude
-                if d < bestD then best, bestD = m, d end
-            end
-        end
-    end
-    if not best then notify("Рядом нет моделей") return end
-    local out = {}
-    table.insert(out, "model: " .. best.Name .. " owner=" .. tostring(modelOwner[best]) .. " dist=" .. tostring(math.floor(bestD)))
-    table.insert(out, "visual: " .. tostring(visualFor(best, modelOwner[best])))
-    for _, d in ipairs(best:GetDescendants()) do
-        local extra = ""
-        if d:IsA("BasePart") then
-            extra = string.format(" trans=%.2f pos=%s size=%s", d.Transparency, tostring(d.Position), tostring(d.Size))
-        end
-        table.insert(out, ("%s [%s]%s"):format(d.Name, d.ClassName, extra))
-    end
-    local text = table.concat(out, "\n")
-    print("[SleepScript] ДАМП\n" .. text)
-    if setclipboard then pcall(setclipboard, text) end
-    notify("Дамп модели скопирован")
-end
-
 local function diagnose()
     local out = {}
-    table.insert(out, "Characters: " .. tostring(charsFolder()))
-    table.insert(out, "Целей в списке: " .. tostring((function() local n = 0 for _ in pairs(targets) do n += 1 end return n end)()))
+    table.insert(out, "Целей: " .. tostring((function() local n = 0 for _ in pairs(targets) do n += 1 end return n end)()))
     table.insert(out, "Мой персонаж: " .. tostring(myChar()))
-    table.insert(out, "Мой hum: " .. tostring(myHum()))
-    table.insert(out, "Команда: " .. tostring(teamOf(lp)))
+    table.insert(out, "state: " .. tostring(lastState))
+    table.insert(out, "Прыжков: " .. tostring(jumpCount))
     local hum = myHum()
     if hum then
+        table.insert(out, "hum state: " .. tostring(realState(hum)))
         table.insert(out, "floor: " .. tostring(hum.FloorMaterial))
-        table.insert(out, "probe: " .. tostring(hum.Parent and surfaceBelow(hum.Parent)))
-        table.insert(out, "why: " .. tostring(lastWhy))
         local root = hum.RootPart or rootOf(hum.Parent)
-        table.insert(out, "root: " .. tostring(root))
         if root then
             table.insert(out, "anchored: " .. tostring(root.Anchored))
             table.insert(out, "y: " .. tostring(root.Position.Y))
-            table.insert(out, "groundY: " .. tostring(groundY))
-            table.insert(out, "inAir: " .. tostring(inAir))
         end
     end
-    table.insert(out, "Прыжков: " .. tostring(jumpCount))
     local text = table.concat(out, "\n")
     print("[SleepScript] ДИАГНОСТИКА\n" .. text)
     if setclipboard then pcall(setclipboard, text) end
     notify("Диагностика скопирована")
+end
+
+local function dumpStructure()
+    local out = {}
+    local n = 0
+    for _, c in ipairs(Workspace:GetChildren()) do
+        n += 1
+        if n > 60 then break end
+        local extra = ""
+        if c:IsA("Folder") or c:IsA("Model") then extra = " kids=" .. tostring(#c:GetChildren()) end
+        table.insert(out, c.Name .. " [" .. c.ClassName .. "]" .. extra)
+    end
+    local text = table.concat(out, "\n")
+    print("[SleepScript] СТРУКТУРА\n" .. text)
+    if setclipboard then pcall(setclipboard, text) end
+    notify("Структура скопирована")
 end
 
 --==============================================================
@@ -2062,15 +1655,9 @@ toggle(visualPage, "Простой режим (подсветка)", false, func
 toggle(visualPage, "Игнорировать своих", true, function(v) S.teamCheck = v end)
 toggle(visualPage, "Показывать ботов", true, function(v) S.showBots = v end)
 toggle(visualPage, "Показывать себя", false, function(v) S.showLocal = v end)
-toggle(visualPage, "Проверка стен", true, function(v) S.visCheck = v end)
 slider(visualPage, "Макс. дистанция", 100, 5000, 2000, function(v) S.maxDist = v end)
-slider(visualPage, "Держать след (сек)", 0, 20, 9, function(v) S.ghostTime = v end)
 
-section(visualPage, "форма")
-chips(visualPage, {
-    { name = "Авто", value = "auto" },
-    { name = "Кости", value = "bones" },
-}, S.boxSource, function(v) S.boxSource = v end, 2)
+section(visualPage, "вид")
 chips(visualPage, {
     { name = "Уголки", value = "corner" },
     { name = "Бокс", value = "full" },
@@ -2078,43 +1665,12 @@ chips(visualPage, {
     { name = "Нет", value = "none" },
 }, S.style, function(v) S.style = v end)
 slider(visualPage, "Толщина", 1, 4, 1, function(v) S.thickness = v end)
-slider(visualPage, "Размер уголков", 4, 24, 9, function(v) S.cornerSize = v end)
-toggle(visualPage, "Чёрная обводка", true, function(v) S.outline = v end)
-toggle(visualPage, "Сглаживание рамки", true, function(v) S.smooth = v end)
-
-section(visualPage, "ник")
-chips(visualPage, {
-    { name = "Ник", value = "name" },
-    { name = "Display", value = "display" },
-    { name = "Оба", value = "both" },
-    { name = "Нет", value = "off" },
-}, S.nameMode, function(v) S.nameMode = v end)
-slider(visualPage, "Размер текста", 9, 22, 13, function(v) S.textSize = v end)
-
-section(visualPage, "дистанция и HP")
 toggle(visualPage, "Дистанция", true, function(v) S.showDist = v end)
 chips(visualPage, {
-    { name = "Метры", value = "m" },
-    { name = "Студы", value = "studs" },
-}, S.distUnit, function(v) S.distUnit = v end, 2)
-chips(visualPage, {
-    { name = "Полоска", value = "bar" },
-    { name = "Цифры", value = "text" },
-    { name = "Нет", value = "off" },
+    { name = "HP: полоска", value = "bar" },
+    { name = "HP: цифры", value = "text" },
+    { name = "HP: нет", value = "off" },
 }, S.hpMode, function(v) S.hpMode = v end, 3)
-
-section(visualPage, "доп")
-toggle(visualPage, "Скелет", false, function(v) S.skeleton = v end)
-toggle(visualPage, "Точка на голове", false, function(v) S.headDot = v end)
-toggle(visualPage, "Трассер", false, function(v) S.tracer = v end)
-toggle(visualPage, "Чеймсы (подсветка модели)", false, function(v) S.chams = v end)
-
-section(visualPage, "цвет")
-chips(visualPage, {
-    { name = "Свой", value = "static" },
-    { name = "По HP", value = "health" },
-    { name = "Дистанция", value = "distance" },
-}, S.colorMode, function(v) S.colorMode = v end, 3)
 
 local PALETTE = {
     { name = "Белый", c = Color3.fromRGB(235, 235, 245) },
@@ -2129,18 +1685,13 @@ local PALETTE = {
 local palItems = {}
 for _, p in ipairs(PALETTE) do table.insert(palItems, { name = p.name, value = p.c, color = p.c }) end
 
-section(visualPage, "свой цвет")
+section(visualPage, "цвет")
 chips(visualPage, palItems, S.colorStatic, function(v) S.colorStatic = v end)
-section(visualPage, "цвет невидимых")
+section(visualPage, "цвет за стеной")
 chips(visualPage, palItems, S.colorHidden, function(v) S.colorHidden = v end)
-section(visualPage, "цвет трассера")
-chips(visualPage, palItems, S.colorTracer, function(v) S.colorTracer = v end)
 
 section(movePage, "бхоп")
 toggle(movePage, "Автобхоп (держать пробел)", false, function(v) S.bhop = v end)
-toggle(movePage, "Импульс (сила)", true, function(v) S.bhopForce = v end)
-toggle(movePage, "Только с земли", true, function(v) S.bhopGround = v end)
-slider(movePage, "Задержка (мс)", 0, 150, 0, function(v) S.bhopDelay = v end)
 
 local dbgLabel = new("TextLabel", {
     Text = "—",
@@ -2149,7 +1700,7 @@ local dbgLabel = new("TextLabel", {
     TextColor3 = Color3.fromRGB(140, 140, 160),
     BackgroundColor3 = Color3.fromRGB(13, 13, 18),
     BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, 46),
+    Size = UDim2.new(1, 0, 0, 30),
     TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true,
@@ -2163,18 +1714,8 @@ task.spawn(function()
             dbgLabel.Text = "бхоп выключен"
             continue
         end
-        local ch = myChar()
-        local root = ch and rootOf(ch)
-        dbgLabel.Text = string.format(
-            "root:%s anch:%s probe:%s air:%s why:%s jumps:%d hop:%s",
-            tostring(root ~= nil),
-            tostring(root and root.Anchored),
-            tostring(ch and surfaceBelow(ch)),
-            tostring(inAir),
-            lastWhy,
-            jumpCount,
-            tostring(hop.active)
-        )
+        dbgLabel.Text = string.format("state:%s jumps:%d space:%s",
+            lastState, jumpCount, tostring(UIS:IsKeyDown(Enum.KeyCode.Space)))
     end
 end)
 
@@ -2230,7 +1771,6 @@ end)
 
 section(miscPage, "служебное")
 button(miscPage, "Диагностика (F9)", diagnose)
-button(miscPage, "Дамп модели (ближайший)", dumpNearest)
 button(miscPage, "Дамп структуры", dumpStructure)
 button(miscPage, "Закрыть меню (Z)", function() closeMenu() end)
 button(miscPage, "Выгрузить скрипт", function()
@@ -2261,12 +1801,10 @@ local function unload()
         pcall(function() t.bg:Destroy() end)
     end
     guiEsp = {}
-    for _, h in pairs(chams) do pcall(function() h:Destroy() end) end
-    chams = {}
     if hookedIndex and origIndex then pcall(function() hookmetamethod(game, "__index", origIndex) end) end
     if hookedNamecall and origNamecall then pcall(function() hookmetamethod(game, "__namecall", origNamecall) end) end
     removeEngineHooks()
-    if camera then pcall(function() camera.FieldOfView = fovOriginal end) end
+    if camera then pcall(function() camera.FieldOfView = fovOriginal) end end
     pcall(function() blur:Destroy() end)
     pcall(function() gui:Destroy() end)
     getgenv().SleepScript = nil
