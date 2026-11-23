@@ -2,21 +2,36 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "2.0",
+    Version   = "2.0.1",
 }
 
-if getgenv().SleepScript then pcall(function() getgenv().SleepScript.Unload() end) end
+-- окружение без прямого вызова getgenv
+local env = _G
+do
+    local g = rawget(_G, "getgenv")
+    if type(g) == "function" then
+        local ok, res = pcall(g)
+        if ok and type(res) == "table" then env = res end
+    end
+end
 
-local booted, bootErr = pcall(function()
+do
+    local prev = env.SleepScript
+    if type(prev) == "table" and type(prev.Unload) == "function" then
+        pcall(prev.Unload)
+    end
+    env.SleepScript = nil
+end
+
+local booted, bootErr = xpcall(function()
 
 local cloneref   = cloneref or function(x) return x end
 local gethui     = gethui or function() return game:GetService("CoreGui") end
-local hasDrawing = Drawing ~= nil and Drawing.new ~= nil
+local hasDrawing = type(Drawing) == "table" and type(Drawing.new) == "function"
 
 local Players           = cloneref(game:GetService("Players"))
 local RunService        = cloneref(game:GetService("RunService"))
 local UIS               = cloneref(game:GetService("UserInputService"))
-local VIM               = cloneref(game:GetService("VirtualInputManager"))
 local TweenService      = cloneref(game:GetService("TweenService"))
 local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local Lighting          = cloneref(game:GetService("Lighting"))
@@ -51,6 +66,7 @@ local CORNER_SIZE = 9
 local GHOST_TIME = 9
 
 local selfRead = false
+local dead = false
 local connections = {}
 local function track(c) table.insert(connections, c) return c end
 
@@ -136,33 +152,31 @@ end
 local function refreshOwners()
     local map = {}
     local plrs = Players:GetPlayers()
-    pcall(function()
-        eachCandidate(function(m)
-            local owner = ownerFromAttributes(m)
-            if not owner then owner = Players:FindFirstChild(m.Name) end
-            if not owner then
-                for _, p in ipairs(plrs) do
-                    if #p.Name > 2 and m.Name:find(p.Name, 1, true) then
-                        owner = p
-                        break
-                    end
+    eachCandidate(function(m)
+        local owner = ownerFromAttributes(m)
+        if not owner then owner = Players:FindFirstChild(m.Name) end
+        if not owner then
+            for _, p in ipairs(plrs) do
+                if #p.Name > 2 and m.Name:find(p.Name, 1, true) then
+                    owner = p
+                    break
                 end
             end
-            if owner then map[m] = owner end
-        end)
+        end
+        if owner then map[m] = owner end
     end)
     if lp.Character and lp.Character.Parent then map[lp.Character] = lp end
     modelOwner = map
 end
 
 task.spawn(function()
-    while task.wait(0.4) do
-        refreshOwners()
+    while not dead and task.wait(0.4) do
+        pcall(refreshOwners)
     end
 end)
 
 task.spawn(function()
-    while task.wait(0.4) do
+    while not dead and task.wait(0.4) do
         local folder = charsFolder()
         local new = {}
         if folder then
@@ -243,10 +257,6 @@ local function teamOfModel(model, owner)
     end
     return nil
 end
-
-local groundParams = RaycastParams.new()
-groundParams.FilterType = Enum.RaycastFilterType.Exclude
-groundParams.IgnoreWater = true
 
 --==============================================================
 --  КАМЕРА / FOV
@@ -481,7 +491,7 @@ local function closeMenu()
     end)
 end
 
-headerButton(-32, "×", function() if getgenv().SleepScript then getgenv().SleepScript.Unload() end end)
+headerButton(-32, "×", function() if env.SleepScript then env.SleepScript.Unload() end end)
 headerButton(-60, "—", function() closeMenu() end)
 
 --==============================================================
@@ -1180,7 +1190,7 @@ end
 local targets = {}
 
 task.spawn(function()
-    while task.wait(0.2) do
+    while not dead and task.wait(0.2) do
         local list = {}
         pcall(function()
             eachCandidate(function(m)
@@ -1194,7 +1204,7 @@ task.spawn(function()
 end)
 
 local function frameUpdate()
-    if not S.espEnabled or not hasDrawing or S.simpleMode then return end
+    if dead or not S.espEnabled or not hasDrawing or S.simpleMode then return end
     local cam = camera or Workspace.CurrentCamera
     if not cam then return end
 
@@ -1238,7 +1248,10 @@ local function frameUpdate()
     end
 end
 
-track(RunService.RenderStepped:Connect(function() pcall(frameUpdate) end))
+track(RunService.RenderStepped:Connect(function()
+    if dead then return end
+    pcall(frameUpdate)
+end))
 
 --==============================================================
 --  ПРОСТОЙ РЕЖИМ
@@ -1324,7 +1337,7 @@ local function updateGuiEsp()
 end
 
 task.spawn(function()
-    while task.wait(0.2) do
+    while not dead and task.wait(0.2) do
         pcall(updateGuiEsp)
     end
 end)
@@ -1336,7 +1349,6 @@ local lastJump = 0
 local jumpCount = 0
 local lastState = "-"
 
--- реальное состояние в обход хука noAirSpread
 local function realState(hum)
     selfRead = true
     local ok, st = pcall(function() return hum:GetState() end)
@@ -1346,7 +1358,7 @@ local function realState(hum)
 end
 
 track(RunService.RenderStepped:Connect(function()
-    if not S.bhop then return end
+    if dead or not S.bhop then return end
     if not UIS:IsKeyDown(Enum.KeyCode.Space) then
         lastState = "no key"
         return
@@ -1358,11 +1370,10 @@ track(RunService.RenderStepped:Connect(function()
     if not hum or hum.Health <= 0 then lastState = "no hum" return end
 
     local st = realState(hum)
+    lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
     if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
-        lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
         return
     end
-    lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
 
     local now = os.clock()
     if now - lastJump < 0.06 then return end
@@ -1591,7 +1602,7 @@ local function removeEngineHooks()
 end
 
 task.spawn(function()
-    while task.wait(0.5) do
+    while not dead and task.wait(0.5) do
         if S.swapKnife then installEngineHooks() end
         if S.holdSkin and S.skin and S.knife then applySkin() end
     end
@@ -1602,6 +1613,7 @@ end)
 --==============================================================
 local function diagnose()
     local out = {}
+    table.insert(out, "Drawing: " .. tostring(hasDrawing))
     table.insert(out, "Целей: " .. tostring((function() local n = 0 for _ in pairs(targets) do n += 1 end return n end)()))
     table.insert(out, "Мой персонаж: " .. tostring(myChar()))
     table.insert(out, "state: " .. tostring(lastState))
@@ -1709,7 +1721,7 @@ new("UICorner", { CornerRadius = UDim.new(0, 8) }, dbgLabel)
 new("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingTop = UDim.new(0, 4) }, dbgLabel)
 
 task.spawn(function()
-    while task.wait(0.15) do
+    while not dead and task.wait(0.15) do
         if not S.bhop then
             dbgLabel.Text = "бхоп выключен"
             continue
@@ -1774,7 +1786,7 @@ button(miscPage, "Диагностика (F9)", diagnose)
 button(miscPage, "Дамп структуры", dumpStructure)
 button(miscPage, "Закрыть меню (Z)", function() closeMenu() end)
 button(miscPage, "Выгрузить скрипт", function()
-    if getgenv().SleepScript then getgenv().SleepScript.Unload() end
+    if env.SleepScript then env.SleepScript.Unload() end
 end)
 
 track(UIS.InputBegan:Connect(function(input, processed)
@@ -1794,6 +1806,7 @@ tabBars.visual.Position = UDim2.new(0, 0, 0.5, -8)
 --  ВЫГРУЗКА
 --==============================================================
 local function unload()
+    dead = true
     for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
     for model in pairs(recs) do dropRec(model) end
     for _, t in pairs(guiEsp) do
@@ -1804,18 +1817,20 @@ local function unload()
     if hookedIndex and origIndex then pcall(function() hookmetamethod(game, "__index", origIndex) end) end
     if hookedNamecall and origNamecall then pcall(function() hookmetamethod(game, "__namecall", origNamecall) end) end
     removeEngineHooks()
-    if camera then pcall(function() camera.FieldOfView = fovOriginal) end end
+    if camera then pcall(function() camera.FieldOfView = fovOriginal end) end
     pcall(function() blur:Destroy() end)
     pcall(function() gui:Destroy() end)
-    getgenv().SleepScript = nil
+    env.SleepScript = nil
 end
 
-getgenv().SleepScript = { Unload = unload, Settings = S }
+env.SleepScript = { Unload = unload, Settings = S }
 
 notify("SleepScript загружен. Z — меню")
 
+end, function(err)
+    return tostring(err) .. "\n" .. debug.traceback()
 end)
 
 if not booted then
-    warn("[SleepScript] ошибка запуска: " .. tostring(bootErr))
+    warn("[SleepScript] ОШИБКА:\n" .. tostring(bootErr))
 end
