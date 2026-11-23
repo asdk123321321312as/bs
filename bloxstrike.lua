@@ -53,6 +53,7 @@ local S = {
     colorStatic = Color3.fromRGB(235, 235, 245),
     colorHidden = Color3.fromRGB(195, 195, 210),
     bhop = false,
+    bhopKey = false,
     unanchor = false,
     noAirSpread = false,
     fovEnabled = false,
@@ -851,6 +852,64 @@ local BLOCKED_PARTS = {
     Collision = true, Collider = true, CollisionBox = true,
 }
 
+local function gatherParts(model, skipBlocked)
+    local parts = {}
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("BasePart") and d.Transparency < 0.95 then
+            if not (skipBlocked and BLOCKED_PARTS[d.Name]) then
+                local mag = d.Size.Magnitude
+                if mag > 0 and mag <= 16 then
+                    parts[#parts + 1] = d
+                    if #parts >= 60 then break end
+                end
+            end
+        end
+    end
+    return parts
+end
+
+local partCache = {}
+
+local function cachedParts(model)
+    local e = partCache[model]
+    local now = os.clock()
+    if e and now - e.t < 0.5 then return e.parts end
+    local parts = gatherParts(model, true)
+    if #parts == 0 then parts = gatherParts(model, false) end
+    partCache[model] = { t = now, parts = parts }
+    return parts
+end
+
+local function buildBounds(model, root)
+    local anchorPos = root and root.Position
+    local parts = cachedParts(model)
+    if #parts == 0 then return nil end
+
+    local anchorPart, bestVol = nil, 0
+    for _, p in ipairs(parts) do
+        if p.Parent and (not anchorPos or (p.Position - anchorPos).Magnitude <= 6) then
+            local v = p.Size.X * p.Size.Y * p.Size.Z
+            if v > bestVol then anchorPart, bestVol = p, v end
+        end
+    end
+    if not anchorPart then return nil end
+    local ap = anchorPart.Position
+
+    local mn, mx
+    for _, p in ipairs(parts) do
+        if p.Parent and (p.Position - ap).Magnitude <= 4.5 then
+            local a, b = p.Position - p.Size * 0.5, p.Position + p.Size * 0.5
+            if mn then
+                mn = Vector3.new(math.min(mn.X, a.X), math.min(mn.Y, a.Y), math.min(mn.Z, a.Z))
+                mx = Vector3.new(math.max(mx.X, b.X), math.max(mx.Y, b.Y), math.max(mx.Z, b.Z))
+            else
+                mn, mx = a, b
+            end
+        end
+    end
+    return mn, mx
+end
+
 local function visualFor(char, owner)
     if not char then return nil end
     for _, d in ipairs(char:GetChildren()) do
@@ -874,43 +933,6 @@ local function visualFor(char, owner)
         end
     end
     return nil
-end
-
-local function buildBounds(model, root)
-    local anchorPos = root and root.Position
-    local parts = {}
-    for _, d in ipairs(model:GetDescendants()) do
-        if d:IsA("BasePart") and d.Transparency < 0.95 and not BLOCKED_PARTS[d.Name] then
-            local mag = d.Size.Magnitude
-            if mag > 0 and mag <= 16 and (not anchorPos or (d.Position - anchorPos).Magnitude <= 6) then
-                parts[#parts + 1] = d
-                if #parts >= 60 then break end
-            end
-        end
-    end
-    if #parts == 0 then return nil end
-
-    local anchorPart, bestVol = nil, 0
-    for _, p in ipairs(parts) do
-        local v = p.Size.X * p.Size.Y * p.Size.Z
-        if v > bestVol then anchorPart, bestVol = p, v end
-    end
-    if not anchorPart then return nil end
-    local ap = anchorPart.Position
-
-    local mn, mx
-    for _, p in ipairs(parts) do
-        if (p.Position - ap).Magnitude <= 4.5 then
-            local a, b = p.Position - p.Size * 0.5, p.Position + p.Size * 0.5
-            if mn then
-                mn = Vector3.new(math.min(mn.X, a.X), math.min(mn.Y, a.Y), math.min(mn.Z, a.Z))
-                mx = Vector3.new(math.max(mx.X, b.X), math.max(mx.Y, b.Y), math.max(mx.Z, b.Z))
-            else
-                mn, mx = a, b
-            end
-        end
-    end
-    return mn, mx
 end
 
 local function projectBounds(cam, mn, mx)
@@ -982,6 +1004,7 @@ local function dropRec(model)
     if not r then return end
     for _, o in ipairs(r.all) do pcall(function() o:Remove() end) end
     recs[model] = nil
+    partCache[model] = nil
 end
 
 local function hide(rec)
@@ -1201,15 +1224,38 @@ end
 
 local targets = {}
 
+local function ownerOf(model)
+    local o = modelOwner[model]
+    if o then return o end
+    o = Players:FindFirstChild(model.Name)
+    if o then return o end
+    local name = model.Name
+    for _, p in ipairs(Players:GetPlayers()) do
+        if #p.Name > 2 and name:find(p.Name, 1, true) then return p end
+    end
+    return nil
+end
+
 task.spawn(function()
-    while not dead and task.wait(0.2) do
+    while not dead and task.wait(0.15) do
         local list = {}
         pcall(function()
-            eachCandidate(function(m)
-                if modelOwner[m] or m:GetAttribute("Bot") == true then
-                    list[m] = true
+            local folder = charsFolder()
+            if folder then
+                for _, m in ipairs(folder:GetChildren()) do
+                    if m:IsA("Model") then list[m] = true end
                 end
-            end)
+            end
+            for _, c in ipairs(Workspace:GetChildren()) do
+                if c ~= folder and (c:IsA("Folder") or c:IsA("Model")) then
+                    local kids = c:GetChildren()
+                    if #kids <= 400 then
+                        for _, m in ipairs(kids) do
+                            if m:IsA("Model") and humOf(m) then list[m] = true end
+                        end
+                    end
+                end
+            end
         end)
         targets = list
     end
@@ -1227,19 +1273,21 @@ local function frameUpdate()
 
     for model in pairs(targets) do
         local rec = recFor(model)
-        local owner = modelOwner[model]
+        local owner = ownerOf(model)
         local skip = false
 
-        if owner == lp and not S.showLocal then
+        if not model.Parent then
             skip = true
-        elseif not owner and not S.showBots then
-            skip = true
+        elseif owner == lp then
+            skip = not S.showLocal
+        elseif not owner then
+            skip = not S.showBots
         elseif S.teamCheck and myTeam then
             local t = teamOfModel(model, owner)
             if t and t == myTeam then skip = true end
         end
 
-        if skip or not model.Parent then
+        if skip then
             hide(rec)
             rec.lastPos = nil
         else
@@ -1286,7 +1334,7 @@ local function updateGuiEsp()
 
     for m in pairs(targets) do
         if m.Parent and m ~= my and not isDead(m) then
-            local owner = modelOwner[m]
+            local owner = ownerOf(m)
             local ok = true
             if owner == lp then
                 ok = false
@@ -1357,15 +1405,22 @@ end)
 --==============================================================
 --  ПРЫЖОК
 --==============================================================
-local lastJump = 0
-local jumpCount = 0
 local lastState = "-"
-local pendingJump = 0
-local jumpY = 0
-local riseMax = 0
+local jumpCount = 0
 local failCount = 0
 local firedConns = 0
-local hop = { active = false, start = 0, dur = 0.45, height = 5.5, lastOffset = 0, root = nil }
+
+local bh = {
+    mode = "auto",      -- auto -> hum -> vel -> hop
+    interval = 0.33,
+    nextAt = 0,
+    lastY = 0,
+    peak = 0,
+    pending = 0,
+    humFails = 0,
+    velFails = 0,
+}
+local hop = { active = false, start = 0, dur = 0.42, height = 5, lastOffset = 0, root = nil }
 
 local fakeInput = {
     KeyCode = Enum.KeyCode.Space,
@@ -1433,8 +1488,7 @@ local function fireJump()
     local n = fireConnections(Enum.UserInputState.Begin)
     firedConns = n
     if n == 0 then
-        n = fireActions()
-        firedConns = n
+        firedConns = fireActions()
     end
     fireKey()
 end
@@ -1456,6 +1510,43 @@ local function hopStep(now)
     if t >= 1 then hop.active = false end
 end
 
+local function attemptJump(now)
+    local char = myChar()
+    if not char then lastState = "нет персонажа" return false end
+    local root = rootOf(char)
+    if not root then lastState = "нет корня" return false end
+
+    if bh.mode == "auto" or bh.mode == "hum" then
+        local hum = humOf(char)
+        if hum and hum.Health > 0 then
+            pcall(function() hum.Jump = true end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+        end
+    end
+
+    fireJump()
+
+    if bh.mode == "vel" or bh.mode == "hop" then
+        if root.Anchored then pcall(function() root.Anchored = false end) end
+        if bh.mode == "vel" then
+            local v = root.AssemblyLinearVelocity
+            pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, 52, v.Z) end)
+        else
+            hop.active = true
+            hop.start = now
+            hop.lastOffset = 0
+            hop.root = root
+        end
+    end
+
+    bh.pending = now
+    bh.lastY = root.Position.Y
+    bh.peak = 0
+    jumpCount += 1
+    lastState = "прыжок/" .. bh.mode
+    return true
+end
+
 track(RunService.RenderStepped:Connect(function()
     if dead or not S.bhop then
         hop.active = false
@@ -1465,69 +1556,62 @@ track(RunService.RenderStepped:Connect(function()
     local now = os.clock()
     hopStep(now)
 
-    if not UIS:IsKeyDown(Enum.KeyCode.Space) then
-        lastState = "no key"
-        return
-    end
-
     local char = myChar()
-    if not char then lastState = "no char" return end
-    local root = rootOf(char)
-    if not root then lastState = "no root" return end
-    local hum = humOf(char)
-
-    if hum then
-        if hum.Health <= 0 then lastState = "dead" return end
-        local st
-        selfRead = true
-        local ok, s = pcall(function() return hum:GetState() end)
-        selfRead = false
-        if ok then st = s end
-        lastState = tostring(st):gsub("Enum.HumanoidStateType.", "")
-        if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then return end
-    else
-        lastState = "no hum"
-    end
+    local root = char and rootOf(char)
 
     -- оценка предыдущей попытки
-    if pendingJump > 0 then
-        local dy = root.Position.Y - jumpY
-        if dy > riseMax then riseMax = dy end
-        if now - pendingJump > 0.3 then
-            pendingJump = 0
-            if riseMax < 0.5 then
+    if bh.pending > 0 and root then
+        local dy = root.Position.Y - bh.lastY
+        if dy > bh.peak then bh.peak = dy end
+        if now - bh.pending > 0.28 then
+            bh.pending = 0
+            if bh.peak < 0.5 then
                 failCount += 1
-                if S.unanchor then
-                    if root.Anchored then
-                        pcall(function() root.Anchored = false end)
+                if bh.mode == "auto" or bh.mode == "hum" then
+                    bh.humFails += 1
+                    if bh.humFails >= 2 then
+                        bh.mode = "vel"
+                        lastState = "переход: скорость"
                     end
-                    pcall(function()
-                        root.AssemblyLinearVelocity = Vector3.new(0, 60, 0)
-                    end)
-                else
-                    hop.active = true
-                    hop.start = now
-                    hop.lastOffset = 0
-                    hop.root = root
+                elseif bh.mode == "vel" then
+                    bh.velFails += 1
+                    if bh.velFails >= 3 then
+                        bh.mode = "hop"
+                        lastState = "переход: подброс"
+                    end
                 end
             else
                 failCount = 0
+                if bh.mode == "auto" then bh.mode = "hum" end
             end
         end
     end
 
-    if now - lastJump < 0.18 then return end
-
-    lastJump = now
-    jumpY = root.Position.Y
-    riseMax = 0
-    pendingJump = now
-    jumpCount += 1
-
-    if hum then
-        pcall(function() hum.Jump = true end)
+    if S.bhopKey and not UIS:IsKeyDown(Enum.KeyCode.Space) then
+        lastState = "ждём пробел"
+        return
     end
-    fireJump()
+
+    if now < bh.nextAt then return end
+
+    if bh.mode == "hum" and root then
+        local hum = humOf(char)
+        if hum then
+            local ok, st = pcall(function() return hum:GetState() end)
+            if ok and (st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall) then
+                lastState = "в воздухе"
+                return
+            end
+        end
+    elseif bh.mode == "vel" and root then
+        if root.AssemblyLinearVelocity.Y > 3 then
+            lastState = "в воздухе"
+            return
+        end
+    end
+
+    bh.nextAt = now + bh.interval
+    attemptJump(now)
 end))
 
 --==============================================================
@@ -1765,7 +1849,8 @@ local function diagnose()
     table.insert(out, "Мой персонаж: " .. tostring(myChar()))
     table.insert(out, "hum: " .. tostring(myHum()))
     table.insert(out, "state: " .. tostring(lastState))
-    table.insert(out, "rise: " .. string.format("%.2f", riseMax))
+    table.insert(out, "режим: " .. bh.mode .. " интервал: " .. string.format("%.2f", bh.interval))
+    table.insert(out, "rise: " .. string.format("%.2f", bh.peak))
     table.insert(out, "Прыжков: " .. tostring(jumpCount) .. " провалов: " .. tostring(failCount))
     local ch = myChar()
     local root = ch and rootOf(ch)
@@ -1865,8 +1950,20 @@ section(visualPage, "цвет за стеной")
 chips(visualPage, palItems, S.colorHidden, function(v) S.colorHidden = v end)
 
 section(movePage, "бхоп")
-toggle(movePage, "Автобхоп (держать пробел)", false, function(v) S.bhop = v end)
-toggle(movePage, "Отвязать корень (если не прыгает)", false, function(v) S.unanchor = v end)
+toggle(movePage, "Автобхоп", false, function(v)
+    S.bhop = v
+    bh.mode = S.unanchor and "vel" or "auto"
+    bh.humFails, bh.velFails = 0, 0
+    bh.nextAt = 0
+    bh.pending = 0
+end)
+toggle(movePage, "Только по пробелу", false, function(v) S.bhopKey = v end)
+slider(movePage, "Интервал", 18, 60, 33, function(v) bh.interval = v / 100 end)
+toggle(movePage, "Только скорость (без Humanoid)", false, function(v)
+    S.unanchor = v
+    bh.mode = v and "vel" or "auto"
+    bh.humFails, bh.velFails = 0, 0
+end)
 
 local dbgLabel = new("TextLabel", {
     Text = "—",
@@ -1889,8 +1986,8 @@ task.spawn(function()
             dbgLabel.Text = "бхоп выключен"
             continue
         end
-        dbgLabel.Text = string.format("conn:%d state:%s rise:%.1f jumps:%d",
-            firedConns, lastState, riseMax, jumpCount)
+        dbgLabel.Text = string.format("режим:%s инт:%.2f подъём:%.1f прыжков:%d сбоев:%d %s",
+            bh.mode, bh.interval, bh.peak, jumpCount, failCount, lastState)
     end
 end)
 
