@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "1.6",
+    Version   = "1.8",
 }
 
 if getgenv().SleepScript then pcall(function() getgenv().SleepScript.Unload() end) end
@@ -25,7 +25,9 @@ local lp                = Players.LocalPlayer
 
 local S = {
     espEnabled = false,
+    simpleMode = false,
     style = "corner",
+    boxSource = "auto",
     thickness = 1,
     cornerSize = 9,
     textSize = 13,
@@ -159,8 +161,7 @@ end
 
 task.spawn(function()
     while task.wait(0.4) do
-        local ok = pcall(refreshOwners)
-        if not ok then end
+        pcall(refreshOwners)
     end
 end)
 
@@ -824,6 +825,113 @@ local function fillList(list, items, current, cb)
 end
 
 --==============================================================
+--  ГЕОМЕТРИЯ ЦЕЛИ
+--==============================================================
+local BLOCKED_PARTS = {
+    HumanoidRootPart = true, RootPart = true, Root = true,
+    Hitbox = true, HitBox = true, HitboxPart = true, HitPart = true,
+    Collision = true, Collider = true, CollisionBox = true,
+}
+
+-- визуальная модель: дочерняя с видимыми частями либо модель в камере с ником
+local function visualFor(char, owner)
+    if not char then return nil end
+    for _, d in ipairs(char:GetChildren()) do
+        if d:IsA("Model") then
+            local n = 0
+            for _, p in ipairs(d:GetDescendants()) do
+                if p:IsA("BasePart") and p.Transparency < 0.95 then
+                    n += 1
+                    if n >= 3 then return d end
+                end
+            end
+        end
+    end
+    local cam = camera or Workspace.CurrentCamera
+    if cam then
+        for _, d in ipairs(cam:GetChildren()) do
+            if d:IsA("Model") then
+                if owner and d.Name:find(owner.Name, 1, true) then return d end
+                if d.Name == char.Name then return d end
+            end
+        end
+    end
+    return nil
+end
+
+local function collectParts(model, anchorPos, onlyMesh)
+    local out = {}
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("BasePart") and d.Transparency < 0.95 and not BLOCKED_PARTS[d.Name] then
+            local mag = d.Size.Magnitude
+            if mag > 0 and mag <= 16 then
+                local ok = true
+                if anchorPos and (d.Position - anchorPos).Magnitude > 6 then ok = false end
+                if ok and onlyMesh then
+                    if not (d:IsA("MeshPart") or d:FindFirstChildOfClass("SpecialMesh")) then ok = false end
+                end
+                if ok then
+                    out[#out + 1] = d
+                    if #out >= 60 then break end
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function boundsFrom(parts, anchorPos)
+    local mn, mx
+    for _, p in ipairs(parts) do
+        if (p.Position - anchorPos).Magnitude <= 4.5 then
+            local a, b = p.Position - p.Size * 0.5, p.Position + p.Size * 0.5
+            if mn then
+                mn = Vector3.new(math.min(mn.X, a.X), math.min(mn.Y, a.Y), math.min(mn.Z, a.Z))
+                mx = Vector3.new(math.max(mx.X, b.X), math.max(mx.Y, b.Y), math.max(mx.Z, b.Z))
+            else
+                mn, mx = a, b
+            end
+        end
+    end
+    return mn, mx
+end
+
+local function buildBounds(model, root)
+    local anchorPos = root and root.Position
+    local parts = collectParts(model, anchorPos, true)
+    if #parts == 0 then parts = collectParts(model, anchorPos, false) end
+    if #parts == 0 then return nil end
+
+    local anchorPart, bestVol = nil, 0
+    for _, p in ipairs(parts) do
+        local v = p.Size.X * p.Size.Y * p.Size.Z
+        if v > bestVol then anchorPart, bestVol = p, v end
+    end
+    if not anchorPart then return nil end
+    return boundsFrom(parts, anchorPart.Position)
+end
+
+local function projectBounds(cam, mn, mx)
+    local minX, minY, maxX, maxY
+    for i = 0, 7 do
+        local c = Vector3.new(
+            (i % 2 == 0) and mn.X or mx.X,
+            (i % 4 < 2) and mn.Y or mx.Y,
+            (i < 4) and mn.Z or mx.Z
+        )
+        local sp, on = cam:WorldToViewportPoint(c)
+        if on and sp.Z > 0 then
+            minX = math.min(minX or sp.X, sp.X)
+            maxX = math.max(maxX or sp.X, sp.X)
+            minY = math.min(minY or sp.Y, sp.Y)
+            maxY = math.max(maxY or sp.Y, sp.Y)
+        end
+    end
+    if not minX then return nil end
+    return minX, minY, maxX, maxY
+end
+
+--==============================================================
 --  ESP
 --==============================================================
 local FONT = (Drawing and Drawing.Fonts and Drawing.Fonts.UI) or 2
@@ -994,45 +1102,72 @@ local function labelFor(plr)
     return plr.Name
 end
 
-local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
+local function drawTarget(rec, cam, camPos, cx, vp, char, geom, label, my, now, key)
     if not char or isDead(char) then hide(rec) return end
 
     local root = rootOf(char)
-    local head = char:FindFirstChild("Head")
     if not root then hide(rec) return end
-
-    local feet = feetOf(char)
-    local topPos = head
-        and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.4, 0))
-        or (root.Position + Vector3.new(0, 2.6, 0))
-    local botPos = feet
-        and (feet.Position - Vector3.new(0, feet.Size.Y * 0.5, 0))
-        or (root.Position - Vector3.new(0, 2.8, 0))
 
     local dist = (camPos - root.Position).Magnitude
     if dist > S.maxDist then hide(rec) return end
 
-    local sTop, onTop = cam:WorldToViewportPoint(topPos)
-    local sBot, onBot = cam:WorldToViewportPoint(botPos)
-    if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
-        hide(rec)
-        return
+    local x, y, w, h, topPos
+
+    local mn, mx
+    if S.boxSource == "auto" then
+        mn, mx = buildBounds(geom or char, root)
     end
 
-    local rawH = sBot.Y - sTop.Y
-    local rawW = rawH * 0.42
-
-    if S.smooth and rec.lastH then
-        rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.45
-        rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.45
-    else
-        rec.lastH, rec.lastW = rawH, rawW
+    if mn then
+        local bx1, by1, bx2, by2 = projectBounds(cam, mn, mx)
+        if not bx1 then hide(rec) return end
+        local rawW, rawH = bx2 - bx1, by2 - by1
+        if rawH > 0 and rawW > 0 and (rawH / rawW) < 9 then
+            if S.smooth and rec.lastH then
+                rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.45
+                rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.45
+            else
+                rec.lastH, rec.lastW = rawH, rawW
+            end
+            h = math.max(rec.lastH, 2)
+            w = math.max(rec.lastW, 2)
+            x = (bx1 + bx2) / 2 - w / 2
+            y = (by1 + by2) / 2 - h / 2
+            topPos = Vector3.new((mn.X + mx.X) / 2, mx.Y, (mn.Z + mx.Z) / 2)
+        else
+            mn = nil
+        end
     end
 
-    local h = math.max(rec.lastH, 2)
-    local w = math.max(rec.lastW, 2)
-    local x = sTop.X - w / 2
-    local y = sTop.Y
+    if not mn then
+        local head = char:FindFirstChild("Head")
+        local feet = feetOf(char)
+        topPos = head
+            and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.4, 0))
+            or (root.Position + Vector3.new(0, 2.6, 0))
+        local botPos = feet
+            and (feet.Position - Vector3.new(0, feet.Size.Y * 0.5, 0))
+            or (root.Position - Vector3.new(0, 2.8, 0))
+
+        local sTop, onTop = cam:WorldToViewportPoint(topPos)
+        local sBot, onBot = cam:WorldToViewportPoint(botPos)
+        if not (onTop and onBot) or sTop.Z <= 0 or sBot.Z <= 0 or sBot.Y <= sTop.Y then
+            hide(rec)
+            return
+        end
+        local rawH = sBot.Y - sTop.Y
+        local rawW = rawH * 0.42
+        if S.smooth and rec.lastH then
+            rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.45
+            rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.45
+        else
+            rec.lastH, rec.lastW = rawH, rawW
+        end
+        h = math.max(rec.lastH, 2)
+        w = math.max(rec.lastW, 2)
+        x = sTop.X - w / 2
+        y = sTop.Y
+    end
 
     local visible = true
     if S.visCheck then
@@ -1138,7 +1273,7 @@ local function drawTarget(rec, cam, camPos, cx, vp, char, label, my, now, key)
 end
 
 local function frameUpdate()
-    if not S.espEnabled or not hasDrawing then return end
+    if not S.espEnabled or not hasDrawing or S.simpleMode then return end
     local cam = camera or Workspace.CurrentCamera
     if not cam then return end
     local folder = charsFolder()
@@ -1172,7 +1307,8 @@ local function frameUpdate()
                 hide(rec)
             else
                 local label = owner and labelFor(owner) or "BOT"
-                drawTarget(rec, cam, camPos, cx, vp, model, label, my, now, model)
+                local geom = visualFor(model, owner)
+                drawTarget(rec, cam, camPos, cx, vp, model, geom, label, my, now, model)
             end
         end
     end
@@ -1187,6 +1323,98 @@ local function frameUpdate()
 end
 
 track(RunService.RenderStepped:Connect(function() pcall(frameUpdate) end))
+
+--==============================================================
+--  ПРОСТОЙ РЕЖИМ (движковый, без проекции)
+--==============================================================
+local guiEsp = {}
+
+local function updateGuiEsp()
+    if not (S.espEnabled and S.simpleMode) then
+        for m, t in pairs(guiEsp) do
+            pcall(function() t.hl:Destroy() end)
+            pcall(function() t.bg:Destroy() end)
+        end
+        guiEsp = {}
+        return
+    end
+
+    local folder = charsFolder()
+    if not folder then return end
+    local my = myChar()
+    local myTeam = teamOf(lp)
+    local wanted = {}
+
+    for _, m in ipairs(folder:GetChildren()) do
+        if m:IsA("Model") and m ~= my and not isDead(m) then
+            local owner = modelOwner[m]
+            local ok = true
+            if owner == lp then
+                ok = false
+            elseif not owner then
+                ok = S.showBots
+            elseif S.teamCheck and myTeam then
+                local t = teamOfModel(m, owner)
+                if t and t == myTeam then ok = false end
+            end
+            if ok then wanted[m] = owner end
+        end
+    end
+
+    for m, t in pairs(guiEsp) do
+        if not wanted[m] or not m.Parent then
+            pcall(function() t.hl:Destroy() end)
+            pcall(function() t.bg:Destroy() end)
+            guiEsp[m] = nil
+        end
+    end
+
+    for m, owner in pairs(wanted) do
+        local geom = visualFor(m, owner) or m
+        local t = guiEsp[m]
+        if not t then
+            local hl = Instance.new("Highlight")
+            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.FillTransparency = 0.72
+            hl.OutlineTransparency = 0
+            hl.FillColor = S.colorStatic
+            hl.OutlineColor = S.colorStatic
+            hl.Parent = gui
+
+            local bg = Instance.new("BillboardGui")
+            bg.Size = UDim2.fromOffset(140, 34)
+            bg.StudsOffsetWorldSpace = Vector3.new(0, 1.2, 0)
+            bg.AlwaysOnTop = true
+            bg.LightInfluence = 0
+            bg.Parent = gui
+
+            local txt = Instance.new("TextLabel")
+            txt.Size = UDim2.fromScale(1, 1)
+            txt.BackgroundTransparency = 1
+            txt.Font = Enum.Font.GothamBold
+            txt.TextSize = S.textSize
+            txt.TextColor3 = S.colorStatic
+            txt.TextStrokeTransparency = 0.4
+            txt.Parent = bg
+
+            t = { hl = hl, bg = bg, txt = txt }
+            guiEsp[m] = t
+        end
+        t.hl.Adornee = geom
+        t.hl.FillColor = S.colorStatic
+        t.hl.OutlineColor = S.colorStatic
+        t.bg.Adornee = geom
+        t.txt.TextColor3 = S.colorStatic
+        local name = labelFor(owner) or "BOT"
+        t.txt.Text = name
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.2) do
+        pcall(updateGuiEsp)
+    end
+end)
 
 --==============================================================
 --  ЧЕЙМСЫ
@@ -1257,6 +1485,9 @@ end)
 local lastJump = 0
 local jumpCount = 0
 local pressBusy = false
+local lowVySince = 0
+local lastWhy = "-"
+local ownerTried = false
 
 local PROBE_DIRS = {
     Vector3.new(0, 0, 0),
@@ -1268,14 +1499,13 @@ local PROBE_DIRS = {
     Vector3.new(-0.8, 0, -0.8),
 }
 
--- зонд земли: рейкасты вниз от ступней и от корпуса, свой персонаж исключён
 local function surfaceBelow(char)
     if not char then return false end
     local probes = {}
     local feet = feetOf(char)
     local root = rootOf(char)
-    if feet then table.insert(probes, { feet.Position, 2.6 }) end
-    if root then table.insert(probes, { root.Position, 6 }) end
+    if feet then table.insert(probes, { feet.Position, 3 }) end
+    if root then table.insert(probes, { root.Position, 7 }) end
     if #probes == 0 then return false end
 
     groundParams.FilterDescendantsInstances = { char }
@@ -1289,83 +1519,98 @@ local function surfaceBelow(char)
     return false
 end
 
-local function onGround(hum)
-    if not hum then return false end
-    local char = hum.Parent
-    if not char then return false end
-    local root = hum.RootPart or rootOf(char)
-    if not root then return false end
-    if root.AssemblyLinearVelocity.Y > 10 then return false end
-
-    if not S.noAirSpread then
-        local floor = hum.FloorMaterial
-        if floor and floor ~= Enum.Material.Air then return true end
+-- четыре независимых сигнала, «settled» защищён от верхней точки прыжка
+local function grounded(char, hum, root, now, vy)
+    if hum and not S.noAirSpread then
+        local f = hum.FloorMaterial
+        if f and f ~= Enum.Material.Air then return true, "floor" end
+        local st = hum:GetState()
+        if st == Enum.HumanoidStateType.Landed or st == Enum.HumanoidStateType.RunningNoPhysics
+            or st == Enum.HumanoidStateType.Climbing then
+            return true, "state"
+        end
     end
-
-    return surfaceBelow(char)
+    if surfaceBelow(char) then return true, "ray" end
+    if math.abs(vy) < 3 and lowVySince > 0 and (now - lowVySince) > 0.12 then return true, "settled" end
+    return false, "air"
 end
 
 local function pressSpace()
     if pressBusy then return end
     pressBusy = true
-    pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
-    task.delay(0.03, function()
-        pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-        pressBusy = false
-    end)
+
+    local keyed = false
+    if typeof(keypress) == "function" then
+        keyed = pcall(keypress, Enum.KeyCode.Space)
+    end
+    if not keyed then
+        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false) end)
+        task.delay(0.04, function()
+            pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false) end)
+        end)
+    end
+    task.delay(0.05, function() pressBusy = false end)
 end
 
-local function doJump(char)
-    if not char then return end
-    local root = rootOf(char)
-    if not root then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-
+local function doJump(char, root, hum)
     if hum then
         pcall(function() hum.Jump = true end)
         pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
     end
     pressSpace()
 
-    if S.bhopForce then
-        local power = 50
-        if hum then
-            if hum.UseJumpPower then
-                power = hum.JumpPower
-            else
-                power = math.sqrt(2 * math.max(Workspace.Gravity, 1) * math.max(hum.JumpHeight, 1))
-            end
-        end
-        power = math.clamp(power or 50, 20, 300)
+    local power = 50
+    if hum then
+        power = hum.UseJumpPower and hum.JumpPower
+            or math.sqrt(2 * math.max(Workspace.Gravity, 1) * math.max(hum.JumpHeight, 1))
+    end
+    power = math.clamp(power or 50, 20, 300)
+
+    if root.Anchored then
+        pcall(function() root.CFrame = root.CFrame * CFrame.new(0, 0.5, 0) end)
+        return
+    end
+    if not ownerTried then
+        ownerTried = true
+        pcall(function() root:SetNetworkOwner(lp) end)
+    end
+    pcall(function()
         local v = root.AssemblyLinearVelocity
         root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, power), v.Z)
-    end
+    end)
 end
 
 track(RunService.RenderStepped:Connect(function()
     if not S.bhop then return end
-    if not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
-
-    local char = myChar()
-    if not char then return end
-    local root = rootOf(char)
-    if not root then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum and hum.Health <= 0 then return end
-
-    if root.AssemblyLinearVelocity.Y > 10 then return end
-
-    if S.bhopGround then
-        local grounded = hum and onGround(hum) or surfaceBelow(char)
-        if not grounded then return end
-    end
 
     local now = os.clock()
-    if now - lastJump < (0.04 + (S.bhopDelay or 0) / 1000) then return end
+    local char = myChar()
+    if not char then lastWhy = "no char" return end
+    local root = rootOf(char)
+    if not root then lastWhy = "no root" return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health <= 0 then lastWhy = "dead" return end
+
+    local vy = root.AssemblyLinearVelocity.Y
+    if math.abs(vy) < 3 then
+        if lowVySince == 0 then lowVySince = now end
+    else
+        lowVySince = 0
+    end
+
+    if not UIS:IsKeyDown(Enum.KeyCode.Space) then lastWhy = "no key" return end
+    if vy > 10 then lastWhy = "rising" return end
+
+    local isGround, why = grounded(char, hum, root, now, vy)
+    lastWhy = why
+
+    local cd = 0.04 + (S.bhopDelay or 0) / 1000
+    if not isGround and S.bhopGround and (now - lastJump) < 0.25 then return end
+    if (now - lastJump) < cd then return end
 
     lastJump = now
     jumpCount += 1
-    doJump(char)
+    doJump(char, root, hum)
 end))
 
 --==============================================================
@@ -1596,32 +1841,76 @@ end)
 --==============================================================
 --  ДИАГНОСТИКА
 --==============================================================
-local function diagnose()
+local function dumpStructure()
     local out = {}
+    local function list(label, parent)
+        table.insert(out, label .. ":")
+        local n = 0
+        for _, c in ipairs(parent:GetChildren()) do
+            n += 1
+            if n > 40 then
+                table.insert(out, "  ...")
+                break
+            end
+            table.insert(out, "  " .. c.Name .. " [" .. c.ClassName .. "]")
+        end
+    end
+    list("Workspace", Workspace)
+    local cam = camera or Workspace.CurrentCamera
+    if cam then list("Camera", cam) end
     local folder = charsFolder()
-    table.insert(out, "Characters: " .. tostring(folder))
-    table.insert(out, "Мой персонаж: " .. tostring(myChar()))
-    table.insert(out, "Мой hum: " .. tostring(myHum()))
-    table.insert(out, "Команда: " .. tostring(teamOf(lp)))
-    table.insert(out, "Resolver: " .. tostring(CharacterResolver))
-    table.insert(out, "Моделей с владельцем: " .. tostring((function() local n = 0 for _ in pairs(modelOwner) do n += 1 end return n end)()))
+    if folder then list("Characters", folder) end
+    local text = table.concat(out, "\n")
+    print("[SleepScript] СТРУКТУРА\n" .. text)
+    if setclipboard then pcall(setclipboard, text) end
+    notify("Структура скопирована")
+end
+
+local function dumpNearest()
+    local best, bestD = nil, math.huge
+    local cam = camera or Workspace.CurrentCamera
+    local camPos = cam and cam.CFrame.Position or Vector3.zero
+    local folder = charsFolder()
     if folder then
-        local shown = 0
         for _, m in ipairs(folder:GetChildren()) do
-            if m:IsA("Model") and shown < 15 then
-                shown += 1
-                local attrs = {}
-                for k, v in pairs(m:GetAttributes()) do
-                    table.insert(attrs, k .. "=" .. tostring(v))
+            if m:IsA("Model") and modelOwner[m] ~= lp then
+                local r = rootOf(m)
+                if r then
+                    local d = (r.Position - camPos).Magnitude
+                    if d < bestD then best, bestD = m, d end
                 end
-                table.insert(out, string.format("  model %s -> %s | %s", m.Name, tostring(modelOwner[m]), table.concat(attrs, ", ")))
             end
         end
     end
+    if not best then notify("Рядом нет моделей") return end
+    local out = {}
+    table.insert(out, "model: " .. best.Name .. " owner=" .. tostring(modelOwner[best]) .. " dist=" .. tostring(math.floor(bestD)))
+    table.insert(out, "visual: " .. tostring(visualFor(best, modelOwner[best])))
+    for _, d in ipairs(best:GetDescendants()) do
+        local extra = ""
+        if d:IsA("BasePart") then
+            extra = string.format(" trans=%.2f pos=%s size=%s", d.Transparency, tostring(d.Position), tostring(d.Size))
+        end
+        table.insert(out, ("%s [%s]%s"):format(d.Name, d.ClassName, extra))
+    end
+    local text = table.concat(out, "\n")
+    print("[SleepScript] ДАМП\n" .. text)
+    if setclipboard then pcall(setclipboard, text) end
+    notify("Дамп модели скопирован")
+end
+
+local function diagnose()
+    local out = {}
+    table.insert(out, "Characters: " .. tostring(charsFolder()))
+    table.insert(out, "Мой персонаж: " .. tostring(myChar()))
+    table.insert(out, "Мой hum: " .. tostring(myHum()))
+    table.insert(out, "Команда: " .. tostring(teamOf(lp)))
+    table.insert(out, "Моделей с владельцем: " .. tostring((function() local n = 0 for _ in pairs(modelOwner) do n += 1 end return n end)()))
     local hum = myHum()
     if hum then
         table.insert(out, "floor: " .. tostring(hum.FloorMaterial))
         table.insert(out, "probe: " .. tostring(hum.Parent and surfaceBelow(hum.Parent)))
+        table.insert(out, "why: " .. tostring(lastWhy))
         table.insert(out, "state: " .. tostring(hum:GetState()))
         local root = hum.RootPart or rootOf(hum.Parent)
         table.insert(out, "root: " .. tostring(root))
@@ -1634,7 +1923,7 @@ local function diagnose()
     local text = table.concat(out, "\n")
     print("[SleepScript] ДИАГНОСТИКА\n" .. text)
     if setclipboard then pcall(setclipboard, text) end
-    notify("Диагностика: F9, скопирована")
+    notify("Диагностика скопирована")
 end
 
 --==============================================================
@@ -1650,6 +1939,7 @@ toggle(visualPage, "Включить ESP", false, function(v)
     S.espEnabled = v
     if v and not hasDrawing then notify("Нет Drawing API") end
 end)
+toggle(visualPage, "Простой режим (подсветка)", false, function(v) S.simpleMode = v end)
 toggle(visualPage, "Игнорировать своих", true, function(v) S.teamCheck = v end)
 toggle(visualPage, "Показывать ботов", true, function(v) S.showBots = v end)
 toggle(visualPage, "Показывать себя", false, function(v) S.showLocal = v end)
@@ -1657,6 +1947,10 @@ toggle(visualPage, "Проверка стен", true, function(v) S.visCheck = v
 slider(visualPage, "Макс. дистанция", 100, 5000, 2000, function(v) S.maxDist = v end)
 
 section(visualPage, "форма")
+chips(visualPage, {
+    { name = "Авто", value = "auto" },
+    { name = "Кости", value = "bones" },
+}, S.boxSource, function(v) S.boxSource = v end, 2)
 chips(visualPage, {
     { name = "Уголки", value = "corner" },
     { name = "Бокс", value = "full" },
@@ -1753,14 +2047,14 @@ task.spawn(function()
         local root = ch and rootOf(ch)
         local hum = ch and ch:FindFirstChildOfClass("Humanoid")
         dbgLabel.Text = string.format(
-            "char:%s hum:%s root:%s anch:%s floor:%s probe:%s vy:%.1f jumps:%d space:%s",
+            "char:%s root:%s anch:%s floor:%s probe:%s vy:%.1f why:%s jumps:%d space:%s",
             tostring(ch ~= nil),
-            tostring(hum ~= nil),
             tostring(root ~= nil),
             tostring(root and root.Anchored),
             tostring(hum and hum.FloorMaterial),
             tostring(ch and surfaceBelow(ch)),
             root and root.AssemblyLinearVelocity.Y or 0,
+            lastWhy,
             jumpCount,
             tostring(UIS:IsKeyDown(Enum.KeyCode.Space))
         )
@@ -1819,6 +2113,8 @@ end)
 
 section(miscPage, "служебное")
 button(miscPage, "Диагностика (F9)", diagnose)
+button(miscPage, "Дамп модели (ближайший)", dumpNearest)
+button(miscPage, "Дамп структуры", dumpStructure)
 button(miscPage, "Закрыть меню (Z)", function() closeMenu() end)
 button(miscPage, "Выгрузить скрипт", function()
     if getgenv().SleepScript then getgenv().SleepScript.Unload() end
@@ -1843,6 +2139,11 @@ tabBars.visual.Position = UDim2.new(0, 0, 0.5, -8)
 local function unload()
     for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
     for model in pairs(recs) do dropRec(model) end
+    for _, t in pairs(guiEsp) do
+        pcall(function() t.hl:Destroy() end)
+        pcall(function() t.bg:Destroy() end)
+    end
+    guiEsp = {}
     for _, h in pairs(chams) do pcall(function() h:Destroy() end) end
     chams = {}
     if hookedIndex and origIndex then pcall(function() hookmetamethod(game, "__index", origIndex) end) end
