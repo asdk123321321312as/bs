@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "2.6",
+    Version   = "2.7",
 }
 
 local env = _G
@@ -35,6 +35,7 @@ local VIM               = cloneref(game:GetService("VirtualInputManager"))
 local TweenService      = cloneref(game:GetService("TweenService"))
 local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 local Lighting          = cloneref(game:GetService("Lighting"))
+local HttpService       = cloneref(game:GetService("HttpService"))
 local Workspace         = cloneref(workspace)
 local lp                = Players.LocalPlayer
 
@@ -79,6 +80,70 @@ local function notify(text, dur)
         })
     end)
 end
+
+--==============================================================
+--  СОХРАНЕНИЕ
+--==============================================================
+local SAVE_FILE = "SleepScript.json"
+local saveAt = 0
+
+local function canSave()
+    return typeof(writefile) == "function" and typeof(readfile) == "function"
+end
+
+local SAVE_KEYS = {
+    "espEnabled", "simpleMode", "style", "thickness", "showDist", "hpMode",
+    "teamCheck", "showBots", "showLocal", "maxDist", "bhop", "trigger",
+    "unanchor", "noAirSpread", "fovEnabled", "fovValue", "swapWeapon", "holdSkin",
+}
+
+local function saveConfig()
+    if not canSave() then return end
+    local data = {}
+    for _, k in ipairs(SAVE_KEYS) do data[k] = S[k] end
+    data.weapon = S.weapon
+    data.skin = S.skin
+    data.colorStatic = { math.floor(S.colorStatic.R * 255), math.floor(S.colorStatic.G * 255), math.floor(S.colorStatic.B * 255) }
+    data.colorHidden = { math.floor(S.colorHidden.R * 255), math.floor(S.colorHidden.G * 255), math.floor(S.colorHidden.B * 255) }
+    local ok, enc = pcall(function() return HttpService:JSONEncode(data) end)
+    if ok and enc then pcall(writefile, SAVE_FILE, enc) end
+end
+
+local function queueSave()
+    saveAt = os.clock() + 0.6
+end
+
+local function loadConfig()
+    if not canSave() or typeof(isfile) ~= "function" or not isfile(SAVE_FILE) then return end
+    local ok, raw = pcall(readfile, SAVE_FILE)
+    if not ok or not raw then return end
+    local ok2, data = pcall(function() return HttpService:JSONDecode(raw) end)
+    if not ok2 or type(data) ~= "table" then return end
+    for _, k in ipairs(SAVE_KEYS) do
+        if type(data[k]) == type(S[k]) then S[k] = data[k] end
+    end
+    if type(data.weapon) == "string" then S.weapon = data.weapon end
+    if type(data.skin) == "string" then S.skin = data.skin end
+    local function col(v)
+        if type(v) == "table" and v[1] and v[2] and v[3] then
+            return Color3.fromRGB(v[1], v[2], v[3])
+        end
+    end
+    S.colorStatic = col(data.colorStatic) or S.colorStatic
+    S.colorHidden = col(data.colorHidden) or S.colorHidden
+end
+
+loadConfig()
+
+task.spawn(function()
+    while not dead do
+        task.wait(0.5)
+        if saveAt > 0 and os.clock() >= saveAt then
+            saveAt = 0
+            saveConfig()
+        end
+    end
+end)
 
 --==============================================================
 --  ПЕРСОНАЖИ
@@ -663,6 +728,7 @@ local function toggle(parent, text, default, cb)
         state = v
         render()
         cb(v)
+        queueSave()
     end
     pill.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -703,6 +769,7 @@ local function slider(parent, text, min, max, default, cb)
         fill.Size = UDim2.fromScale(rel, 1)
         valueLabel.Text = tostring(value)
         cb(value)
+        queueSave()
     end
     trackF.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -778,6 +845,7 @@ local function chips(parent, items, current, cb, perRow)
             current = item.value
             paint(true)
             cb(item.value)
+            queueSave()
         end)
     end
     paint(false)
@@ -837,121 +905,10 @@ local function fillList(list, items, current, cb)
             current = name
             paint()
             cb(name)
+            queueSave()
         end)
     end
     paint()
-end
-
---==============================================================
---  ГЕОМЕТРИЯ
---==============================================================
-local BLOCKED_PARTS = {
-    HumanoidRootPart = true, RootPart = true, Root = true,
-    Hitbox = true, HitBox = true, HitboxPart = true, HitPart = true,
-    Collision = true, Collider = true, CollisionBox = true,
-}
-
-local function gatherParts(model, skipBlocked)
-    local parts = {}
-    for _, d in ipairs(model:GetDescendants()) do
-        if d:IsA("BasePart") and d.Transparency < 0.95 then
-            if not (skipBlocked and BLOCKED_PARTS[d.Name]) then
-                local mag = d.Size.Magnitude
-                if mag > 0 and mag <= 16 then
-                    parts[#parts + 1] = d
-                    if #parts >= 60 then break end
-                end
-            end
-        end
-    end
-    return parts
-end
-
-local partCache = {}
-
-local function cachedParts(model)
-    local e = partCache[model]
-    local now = os.clock()
-    if e and now - e.t < 0.5 then return e.parts end
-    local parts = gatherParts(model, true)
-    if #parts == 0 then parts = gatherParts(model, false) end
-    partCache[model] = { t = now, parts = parts }
-    return parts
-end
-
-local function buildBounds(model, root)
-    local anchorPos = root and root.Position
-    local parts = cachedParts(model)
-    if #parts == 0 then return nil end
-
-    local anchorPart, bestVol = nil, 0
-    for _, p in ipairs(parts) do
-        if p.Parent and (not anchorPos or (p.Position - anchorPos).Magnitude <= 6) then
-            local v = p.Size.X * p.Size.Y * p.Size.Z
-            if v > bestVol then anchorPart, bestVol = p, v end
-        end
-    end
-    if not anchorPart then return nil end
-    local ap = anchorPart.Position
-
-    local mn, mx
-    for _, p in ipairs(parts) do
-        if p.Parent and (p.Position - ap).Magnitude <= 4.5 then
-            local a, b = p.Position - p.Size * 0.5, p.Position + p.Size * 0.5
-            if mn then
-                mn = Vector3.new(math.min(mn.X, a.X), math.min(mn.Y, a.Y), math.min(mn.Z, a.Z))
-                mx = Vector3.new(math.max(mx.X, b.X), math.max(mx.Y, b.Y), math.max(mx.Z, b.Z))
-            else
-                mn, mx = a, b
-            end
-        end
-    end
-    return mn, mx
-end
-
-local function visualFor(char, owner)
-    if not char then return nil end
-    for _, d in ipairs(char:GetChildren()) do
-        if d:IsA("Model") then
-            local n = 0
-            for _, p in ipairs(d:GetDescendants()) do
-                if p:IsA("BasePart") and p.Transparency < 0.95 then
-                    n += 1
-                    if n >= 3 then return d end
-                end
-            end
-        end
-    end
-    local cam = camera or Workspace.CurrentCamera
-    if cam then
-        for _, d in ipairs(cam:GetChildren()) do
-            if d:IsA("Model") then
-                if owner and d.Name:find(owner.Name, 1, true) then return d end
-                if d.Name == char.Name then return d end
-            end
-        end
-    end
-    return nil
-end
-
-local function projectBounds(cam, mn, mx)
-    local minX, minY, maxX, maxY
-    for i = 0, 7 do
-        local c = Vector3.new(
-            (i % 2 == 0) and mn.X or mx.X,
-            (i % 4 < 2) and mn.Y or mx.Y,
-            (i < 4) and mn.Z or mx.Z
-        )
-        local sp, on = cam:WorldToViewportPoint(c)
-        if on and sp.Z > 0 then
-            minX = math.min(minX or sp.X, sp.X)
-            maxX = math.max(maxX or sp.X, sp.X)
-            minY = math.min(minY or sp.Y, sp.Y)
-            maxY = math.max(maxY or sp.Y, sp.Y)
-        end
-    end
-    if not minX then return nil end
-    return minX, minY, maxX, maxY
 end
 
 --==============================================================
@@ -1003,7 +960,6 @@ local function dropRec(model)
     if not r then return end
     for _, o in ipairs(r.all) do pcall(function() o:Remove() end) end
     recs[model] = nil
-    partCache[model] = nil
 end
 
 local function hide(rec)
@@ -1057,6 +1013,32 @@ local function drawBox(rec, x, y, w, h, col)
     put(rec.corners[8], x + w - t, y + h - c, t, c, col)
 end
 
+-- точный габарит модели, бокс жёстко привязан к ней
+local function modelBox(cam, model)
+    local ok, cf, size = pcall(model.GetBoundingBox, model)
+    if not ok or not cf or not size then return nil end
+    local sx = math.clamp(size.X, 0.4, 10) * 0.5
+    local sy = math.clamp(size.Y, 0.4, 10) * 0.5
+    local sz = math.clamp(size.Z, 0.4, 10) * 0.5
+    local minX, minY, maxX, maxY
+    for i = 0, 7 do
+        local off = Vector3.new(
+            (i % 2 == 0) and -sx or sx,
+            (i % 4 < 2) and -sy or sy,
+            (i < 4) and -sz or sz
+        )
+        local sp, on = cam:WorldToViewportPoint((cf * CFrame.new(off)).Position)
+        if on and sp.Z > 0 then
+            minX = math.min(minX or sp.X, sp.X)
+            maxX = math.max(maxX or sp.X, sp.X)
+            minY = math.min(minY or sp.Y, sp.Y)
+            maxY = math.max(maxY or sp.Y, sp.Y)
+        end
+    end
+    if not minX then return nil end
+    return minX, minY, maxX, maxY, (cf * CFrame.new(0, sy, 0)).Position
+end
+
 local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
     if not char or isDead(char) then hide(rec) return end
 
@@ -1071,16 +1053,14 @@ local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
     rec.label = label
 
     local x, y, w, h, topPos
-    local mn, mx = buildBounds(geom or char, root)
+    local bx1, by1, bx2, by2, topWorld = modelBox(cam, geom or char)
 
-    if mn then
-        local bx1, by1, bx2, by2 = projectBounds(cam, mn, mx)
-        if not bx1 then hide(rec) return end
+    if bx1 then
         local rawW, rawH = bx2 - bx1, by2 - by1
-        if rawH > 0 and rawW > 0 and (rawH / rawW) < 9 then
+        if rawH > 0 and rawW > 0 and (rawH / rawW) < 12 then
             if rec.lastH then
-                rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.45
-                rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.45
+                rec.lastH = rec.lastH + (rawH - rec.lastH) * 0.5
+                rec.lastW = rec.lastW + (rawW - rec.lastW) * 0.5
             else
                 rec.lastH, rec.lastW = rawH, rawW
             end
@@ -1088,13 +1068,13 @@ local function drawTarget(rec, cam, camPos, char, geom, label, my, now, key)
             w = math.max(rec.lastW, 2)
             x = (bx1 + bx2) / 2 - w / 2
             y = (by1 + by2) / 2 - h / 2
-            topPos = Vector3.new((mn.X + mx.X) / 2, mx.Y, (mn.Z + mx.Z) / 2)
+            topPos = topWorld
         else
-            mn = nil
+            bx1 = nil
         end
     end
 
-    if not mn then
+    if not bx1 then
         local head = char:FindFirstChild("Head")
         topPos = head
             and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.4, 0))
@@ -1190,8 +1170,30 @@ end
 local function drawGhost(rec, cam, camPos, pos, label)
     local mn = pos + Vector3.new(-0.85, -2.7, -0.85)
     local mx = pos + Vector3.new(0.85, 2.5, 0.85)
-    local bx1, by1, bx2, by2 = projectBounds(cam, mn, mx)
-    if not bx1 then hide(rec) return end
+    local bx1, by1, bx2, by2 = modelBox(cam, nil) or nil, nil, nil, nil
+    local ok = false
+    if mn and mx then
+        local minX, minY, maxX, maxY
+        for i = 0, 7 do
+            local c = Vector3.new(
+                (i % 2 == 0) and mn.X or mx.X,
+                (i % 4 < 2) and mn.Y or mx.Y,
+                (i < 4) and mn.Z or mx.Z
+            )
+            local sp, on = cam:WorldToViewportPoint(c)
+            if on and sp.Z > 0 then
+                minX = math.min(minX or sp.X, sp.X)
+                maxX = math.max(maxX or sp.X, sp.X)
+                minY = math.min(minY or sp.Y, sp.Y)
+                maxY = math.max(maxY or sp.Y, sp.Y)
+            end
+        end
+        if minX then
+            bx1, by1, bx2, by2 = minX, minY, maxX, maxY
+            ok = true
+        end
+    end
+    if not ok then hide(rec) return end
 
     local w = math.max(bx2 - bx1, 2)
     local h = math.max(by2 - by1, 2)
@@ -1290,7 +1292,7 @@ local function frameUpdate()
             hide(rec)
             rec.lastPos = nil
         else
-            drawTarget(rec, cam, camPos, model, visualFor(model, owner), owner and owner.Name or "BOT", my, now, model)
+            drawTarget(rec, cam, camPos, model, nil, owner and owner.Name or "BOT", my, now, model)
         end
     end
 
@@ -1356,7 +1358,6 @@ local function updateGuiEsp()
     end
 
     for m, owner in pairs(wanted) do
-        local geom = visualFor(m, owner) or m
         local t = guiEsp[m]
         if not t then
             local hl = Instance.new("Highlight")
@@ -1386,10 +1387,10 @@ local function updateGuiEsp()
             t = { hl = hl, bg = bg, txt = txt }
             guiEsp[m] = t
         end
-        t.hl.Adornee = geom
+        t.hl.Adornee = m
         t.hl.FillColor = S.colorStatic
         t.hl.OutlineColor = S.colorStatic
-        t.bg.Adornee = geom
+        t.bg.Adornee = m
         t.txt.TextColor3 = S.colorStatic
         t.txt.Text = owner and owner.Name or "BOT"
     end
@@ -1409,13 +1410,14 @@ local jumpCount = 0
 local failCount = 0
 
 local bh = {
-    mode = "auto",
+    mode = S.unanchor and "vel" or "auto",
     interval = 0.33,
     nextAt = 0,
     lastY = 0,
     peak = 0,
     pending = 0,
     fails = 0,
+    air = 0,
     wheelArmed = 0,
 }
 
@@ -1501,9 +1503,8 @@ local function doJump(now, root, hum)
     local char = myChar()
 
     if mode == "hum" then
-        if hum then
+        if hum and hum.Health > 0 then
             pcall(function() hum.Jump = true end)
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
         end
         pressSpace()
     elseif mode == "vel" then
@@ -1553,13 +1554,13 @@ local function bhopTick()
                 failCount += 1
                 bh.fails += 1
                 if bh.mode == "auto" or bh.mode == "hum" then
-                    if bh.fails >= 2 then
+                    if bh.fails >= 1 then
                         bh.mode = "vel"
                         bh.fails = 0
                         lastState = "переход: vel"
                     end
                 elseif bh.mode == "vel" then
-                    if bh.fails >= 3 then
+                    if bh.fails >= 2 then
                         bh.mode = "hop"
                         bh.fails = 0
                         lastState = "переход: hop"
@@ -1589,6 +1590,7 @@ local function bhopTick()
     end
 
     if not want then
+        bh.air = 0
         lastState = "ждём ввод"
         return
     end
@@ -1596,8 +1598,13 @@ local function bhopTick()
     if now < bh.nextAt then return end
 
     if not grounded(char, root, hum) then
-        lastState = "в воздухе"
-        return
+        bh.air += 1
+        if bh.air < 20 then
+            lastState = "в воздухе"
+            return
+        end
+    else
+        bh.air = 0
     end
 
     bh.nextAt = now + bh.interval
@@ -1783,6 +1790,18 @@ local function partNamesOf()
     return set
 end
 
+local function hasArmPart(model)
+    for _, p in ipairs(model:GetDescendants()) do
+        if p:IsA("BasePart") then
+            local n = norm(p.Name)
+            if n:find("arm", 1, true) or n:find("hand", 1, true) or n:find("glove", 1, true) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function skinTargets(weapon)
     local cat = categoryOf(weapon)
     local out, seen = {}, {}
@@ -1797,10 +1816,7 @@ local function skinTargets(weapon)
         for _, o in ipairs(cam:GetChildren()) do
             if o:IsA("Model") then
                 if cat == "gloves" then
-                    local n = string.lower(o.Name)
-                    if n:find("glove", 1, true) or n:find("arm", 1, true) or n:find("hand", 1, true) then
-                        push(o)
-                    end
+                    if hasArmPart(o) then push(o) end
                 elseif matchesName(o.Name, weapon) then
                     push(o)
                 end
@@ -1986,8 +2002,7 @@ end
 
 local function engineAlive()
     local c = myChar()
-    if not c or c.Parent ~= charsFolder() then return false end
-    return not isDead(c)
+    return c ~= nil and c.Parent ~= nil
 end
 
 local function installEngineHooks()
@@ -2036,8 +2051,9 @@ local function removeEngineHooks()
     hookedEngine = false
 end
 
+-- удержание + автоприменение при появлении новой модели
 task.spawn(function()
-    while not dead and task.wait(0.6) do
+    while not dead and task.wait(0.5) do
         if S.swapWeapon then installEngineHooks() end
         if S.holdSkin and S.skin and S.weapon then
             for _, vm in ipairs(skinTargets(S.weapon)) do
@@ -2046,6 +2062,49 @@ task.spawn(function()
         end
     end
 end)
+
+local watchedCam = nil
+
+local function watchCamera()
+    local cam = camera or Workspace.CurrentCamera
+    if not cam or cam == watchedCam then return end
+    watchedCam = cam
+    track(cam.ChildAdded:Connect(function()
+        if dead or not S.weapon or not S.skin then return end
+        task.spawn(function()
+            for _ = 1, 5 do
+                if dead then break end
+                if applySkin() then break end
+                task.wait(0.1)
+            end
+        end)
+    end))
+end
+
+task.spawn(function()
+    while not dead do
+        pcall(watchCamera)
+        task.wait(1)
+    end
+end)
+
+track(lp.CharacterAdded:Connect(function()
+    task.wait(0.4)
+    if dead then return end
+    bh.mode = S.unanchor and "vel" or "auto"
+    bh.fails = 0
+    bh.air = 0
+    bh.pending = 0
+    if S.weapon and S.skin then
+        task.spawn(function()
+            for _ = 1, 8 do
+                if dead then break end
+                if applySkin() then break end
+                task.wait(0.2)
+            end
+        end)
+    end
+end))
 
 --==============================================================
 --  ДИАГНОСТИКА
@@ -2063,6 +2122,7 @@ local function diagnose()
     table.insert(out, "WC path: " .. modPath("WeaponComponent"))
     table.insert(out, "Skins path: " .. modPath("Skins"))
     table.insert(out, "hooked: " .. tostring(hookedEngine))
+    table.insert(out, "save: " .. tostring(canSave()))
     local ch = myChar()
     local root = ch and rootOf(ch)
     if root then
@@ -2077,6 +2137,8 @@ local function diagnose()
         table.insert(out, "humState: " .. tostring(ok and st or "err"))
         local ok2, mat = pcall(function() return hum.FloorMaterial end)
         table.insert(out, "floor: " .. tostring(ok2 and mat or "err"))
+        table.insert(out, "jump: " .. tostring(hum.Jump))
+        table.insert(out, "jumpPower: " .. tostring(hum.JumpPower))
     end
     local text = table.concat(out, "\n")
     print("[SleepScript] ДИАГНОСТИКА\n" .. text)
@@ -2123,7 +2185,7 @@ local function dumpCamera()
     local out = {}
     for _, o in ipairs(cam:GetChildren()) do
         if o:IsA("Model") then
-            table.insert(out, o.Name .. " [" .. o.ClassName .. "] kids=" .. #o:GetChildren())
+            table.insert(out, o.Name .. " [" .. o.ClassName .. "] kids=" .. #o:GetChildren() .. " arm=" .. tostring(hasArmPart(o)))
             for _, d in ipairs(o:GetDescendants()) do
                 if d:IsA("BasePart") then table.insert(out, "   " .. d.Name) end
             end
@@ -2181,15 +2243,15 @@ local skinPage   = page("skin");   tabButton("Скины", "skin")
 local miscPage   = page("misc");   tabButton("Прочее", "misc")
 
 section(visualPage, "основа")
-toggle(visualPage, "Включить ESP", false, function(v)
+toggle(visualPage, "Включить ESP", S.espEnabled, function(v)
     S.espEnabled = v
     if v and not hasDrawing then notify("Нет Drawing API") end
 end)
-toggle(visualPage, "Простой режим (подсветка)", false, function(v) S.simpleMode = v end)
-toggle(visualPage, "Игнорировать своих", true, function(v) S.teamCheck = v end)
-toggle(visualPage, "Показывать ботов", true, function(v) S.showBots = v end)
-toggle(visualPage, "Показывать себя", false, function(v) S.showLocal = v end)
-slider(visualPage, "Макс. дистанция", 100, 5000, 2000, function(v) S.maxDist = v end)
+toggle(visualPage, "Простой режим (подсветка)", S.simpleMode, function(v) S.simpleMode = v end)
+toggle(visualPage, "Игнорировать своих", S.teamCheck, function(v) S.teamCheck = v end)
+toggle(visualPage, "Показывать ботов", S.showBots, function(v) S.showBots = v end)
+toggle(visualPage, "Показывать себя", S.showLocal, function(v) S.showLocal = v end)
+slider(visualPage, "Макс. дистанция", 100, 5000, S.maxDist, function(v) S.maxDist = v end)
 
 section(visualPage, "вид")
 chips(visualPage, {
@@ -2198,8 +2260,8 @@ chips(visualPage, {
     { name = "Точка", value = "dot" },
     { name = "Нет", value = "none" },
 }, S.style, function(v) S.style = v end)
-slider(visualPage, "Толщина", 1, 4, 1, function(v) S.thickness = v end)
-toggle(visualPage, "Дистанция", true, function(v) S.showDist = v end)
+slider(visualPage, "Толщина", 1, 4, S.thickness, function(v) S.thickness = v end)
+toggle(visualPage, "Дистанция", S.showDist, function(v) S.showDist = v end)
 chips(visualPage, {
     { name = "HP: полоска", value = "bar" },
     { name = "HP: цифры", value = "text" },
@@ -2225,10 +2287,11 @@ section(visualPage, "цвет за стеной")
 chips(visualPage, palItems, S.colorHidden, function(v) S.colorHidden = v end)
 
 section(movePage, "бхоп")
-toggle(movePage, "Автобхоп", false, function(v)
+toggle(movePage, "Автобхоп", S.bhop, function(v)
     S.bhop = v
     bh.mode = S.unanchor and "vel" or "auto"
     bh.fails = 0
+    bh.air = 0
     bh.nextAt = 0
     bh.pending = 0
     bh.wheelArmed = 0
@@ -2239,11 +2302,22 @@ chips(movePage, {
     { name = "Колесо вниз", value = "wheel" },
     { name = "Оба", value = "both" },
 }, S.trigger, function(v) S.trigger = v end, 3)
-slider(movePage, "Интервал", 18, 60, 33, function(v) bh.interval = v / 100 end)
-toggle(movePage, "Только скорость (без Humanoid)", false, function(v)
+slider(movePage, "Интервал", 18, 60, math.floor(bh.interval * 100), function(v) bh.interval = v / 100 end)
+toggle(movePage, "Только скорость (без Humanoid)", S.unanchor, function(v)
     S.unanchor = v
     bh.mode = v and "vel" or "auto"
     bh.fails = 0
+    bh.air = 0
+end)
+button(movePage, "Тест прыжка", function()
+    local char = myChar()
+    local root = char and rootOf(char)
+    if not root then notify("Персонаж не найден") return end
+    local hum = humOf(char)
+    doJump(os.clock(), root, hum)
+    task.delay(0.35, function()
+        notify("подъём: " .. string.format("%.2f", bh.peak) .. " / " .. tostring(lastState))
+    end)
 end)
 
 local dbgLabel = new("TextLabel", {
@@ -2273,15 +2347,15 @@ task.spawn(function()
 end)
 
 section(movePage, "точность")
-toggle(movePage, "Убрать разброс в полёте", false, function(v) S.noAirSpread = v end)
+toggle(movePage, "Убрать разброс в полёте", S.noAirSpread, function(v) S.noAirSpread = v end)
 
 section(movePage, "камера")
-toggle(movePage, "Фиксация FOV", false, function(v)
+toggle(movePage, "Фиксация FOV", S.fovEnabled, function(v)
     if v and camera then fovOriginal = camera.FieldOfView end
     S.fovEnabled = v
     applyFov()
 end)
-slider(movePage, "FOV", 40, 120, 90, function(v)
+slider(movePage, "FOV", 40, 120, S.fovValue, function(v)
     S.fovValue = v
     applyFov()
 end)
@@ -2329,7 +2403,7 @@ local skinBox = listBox(skinPage, 132)
 
 local function refreshSkins()
     local list = skinList(S.weapon)
-    S.skin = list[1]
+    if not S.skin or not table.find(list, S.skin) then S.skin = list[1] end
     fillList(skinBox, list, S.skin, function(v) S.skin = v end)
 end
 
@@ -2344,7 +2418,7 @@ function refreshWeapons()
             if #list >= MAX_ROWS then break end
         end
     end
-    if S.weapon and not table.find(list, S.weapon) then
+    if S.weapon and #list > 0 and not table.find(list, S.weapon) then
         S.weapon = list[1]
         refreshSkins()
     end
@@ -2381,8 +2455,8 @@ button(skinPage, "Сбросить скин", function()
     resetSkins()
     notify("Скины сброшены")
 end)
-toggle(skinPage, "Держать скин", true, function(v) S.holdSkin = v end)
-toggle(skinPage, "Подменять модель (по категории)", false, function(v)
+toggle(skinPage, "Держать скин", S.holdSkin, function(v) S.holdSkin = v end)
+toggle(skinPage, "Подменять модель (по категории)", S.swapWeapon, function(v)
     S.swapWeapon = v
     if v then
         installEngineHooks()
@@ -2398,6 +2472,10 @@ button(miscPage, "Дамп персонажа", dumpSelf)
 button(miscPage, "Дамп структуры", dumpStructure)
 button(miscPage, "Дамп моделей камеры", dumpCamera)
 button(miscPage, "Дамп скинов", dumpSkins)
+button(miscPage, "Сохранить настройки", function()
+    saveConfig()
+    notify("Сохранено")
+end)
 button(miscPage, "Закрыть меню (Z)", function() closeMenu() end)
 button(miscPage, "Выгрузить скрипт", function()
     if env.SleepScript then env.SleepScript.Unload() end
@@ -2444,13 +2522,29 @@ task.spawn(function()
     if not dead then
         refreshWeapons()
         refreshSkins()
+        if S.weapon and S.skin and (S.holdSkin or S.swapWeapon) then
+            task.spawn(function()
+                for _ = 1, 6 do
+                    if dead then break end
+                    if applySkin() then break end
+                    task.wait(0.2)
+                end
+            end)
+        end
     end
 end)
+
+--==============================================================
+--  ПРИМЕНЕНИЕ ЗАГРУЖЕННОГО
+--==============================================================
+if S.fovEnabled then applyFov() end
+if S.swapWeapon then installEngineHooks() end
 
 --==============================================================
 --  ВЫГРУЗКА
 --==============================================================
 local function unload()
+    saveConfig()
     dead = true
     for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
     for model in pairs(recs) do dropRec(model) end
