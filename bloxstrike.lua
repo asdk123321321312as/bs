@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "2.5",
+    Version   = "2.6",
 }
 
 local env = _G
@@ -1825,13 +1825,16 @@ local function skinTargets(weapon)
 end
 
 local function findPart(vm, name)
+    local exact = vm:FindFirstChild(name, true)
+    if exact and exact:IsA("BasePart") then return exact end
     local low = norm(name)
+    if low == "" then return nil end
     local fuzzy
     for _, p in ipairs(vm:GetDescendants()) do
         if p:IsA("BasePart") then
             local pn = norm(p.Name)
-            if pn == low and low ~= "" then return p end
-            if not fuzzy and low ~= "" and (pn:find(low, 1, true) or low:find(pn, 1, true)) then
+            if pn == low then return p end
+            if not fuzzy and (pn:find(low, 1, true) or low:find(pn, 1, true)) then
                 fuzzy = p
             end
         end
@@ -1947,17 +1950,38 @@ local hookedEngine = false
 local origWeaponNew, origGetCameraModel
 local WeaponComponent, SkinsLib
 
+local KNOWN_MODULES = {
+    WeaponComponent = { "Classes", "WeaponComponent" },
+    Skins = { "Database", "Components", "Libraries", "Skins" },
+}
+local moduleScan = {}
+
 local function findModule(name)
-    for _, d in ipairs(ReplicatedStorage:GetChildren()) do
-        if d:IsA("ModuleScript") and d.Name == name then return d end
+    local path = KNOWN_MODULES[name]
+    if path then
+        local node = ReplicatedStorage
+        for _, part in ipairs(path) do
+            node = node and node:FindFirstChild(part)
+        end
+        if node and node:IsA("ModuleScript") then return node end
     end
-    for _, d in ipairs(ReplicatedStorage:GetChildren()) do
-        if d:IsA("Folder") or d:IsA("ModuleScript") then
-            local f = d:FindFirstChild(name, true)
-            if f and f:IsA("ModuleScript") then return f end
+    local e = moduleScan[name]
+    local now = os.clock()
+    if e and now - e.t < 5 then return e.mod end
+    local found = nil
+    for _, d in ipairs(ReplicatedStorage:GetDescendants()) do
+        if d:IsA("ModuleScript") and d.Name == name then
+            found = d
+            break
         end
     end
-    return nil
+    moduleScan[name] = { t = now, mod = found }
+    return found
+end
+
+local function modPath(name)
+    local m = findModule(name)
+    return m and m:GetFullName() or "nil"
 end
 
 local function engineAlive()
@@ -1969,9 +1993,14 @@ end
 local function installEngineHooks()
     if hookedEngine or typeof(hookfunction) ~= "function" then return end
 
-    pcall(function() WeaponComponent = findModule("WeaponComponent") end)
-    pcall(function() SkinsLib = findModule("Skins") end)
+    local wc = findModule("WeaponComponent")
+    local sl = findModule("Skins")
+    if wc then pcall(function() WeaponComponent = require(wc) end) end
+    if sl then pcall(function() SkinsLib = require(sl) end) end
     if not WeaponComponent or not SkinsLib then return end
+    if type(WeaponComponent.new) ~= "function" or type(SkinsLib.GetCameraModel) ~= "function" then
+        return
+    end
 
     local ok1 = pcall(function()
         origWeaponNew = WeaponComponent.new
@@ -2031,8 +2060,9 @@ local function diagnose()
     table.insert(out, "Оружие: " .. tostring(S.weapon) .. " / " .. tostring(S.skin))
     table.insert(out, "Скинов в базе: " .. tostring(#weaponList()))
     table.insert(out, "SkinsFolder: " .. tostring(SkinsFolder))
-    table.insert(out, "WeaponComponent: " .. tostring(findModule("WeaponComponent")))
-    table.insert(out, "SkinsLib: " .. tostring(findModule("Skins")))
+    table.insert(out, "WC path: " .. modPath("WeaponComponent"))
+    table.insert(out, "Skins path: " .. modPath("Skins"))
+    table.insert(out, "hooked: " .. tostring(hookedEngine))
     local ch = myChar()
     local root = ch and rootOf(ch)
     if root then
