@@ -2,7 +2,7 @@ local CONFIG = {
     Accent    = Color3.fromRGB(140, 110, 255),
     AccentDim = Color3.fromRGB(44, 34, 92),
     Keybind   = Enum.KeyCode.Z,
-    Version   = "3.0",
+    Version   = "3.2",
 }
 
 local env = _G
@@ -30,6 +30,7 @@ local gethui     = gethui or function() return game:GetService("CoreGui") end
 local Players           = cloneref(game:GetService("Players"))
 local RunService        = cloneref(game:GetService("RunService"))
 local UIS               = cloneref(game:GetService("UserInputService"))
+local CAS               = cloneref(game:GetService("ContextActionService"))
 local VIM               = cloneref(game:GetService("VirtualInputManager"))
 local TweenService      = cloneref(game:GetService("TweenService"))
 local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
@@ -154,14 +155,12 @@ local function myChar()
     return c
 end
 
-local function isDead(char)
-    if not char then return true end
-    if char:GetAttribute("Dead") == true then return true end
-    local hp = tonumber(char:GetAttribute("Health"))
-    if hp and hp <= 0 then return true end
-    local hum = humOf(char)
-    if hum and hum.Health <= 0 then return true end
-    return false
+local function pivotY(char)
+    if not char then return 0 end
+    local ok, piv = pcall(function() return char:GetPivot() end)
+    if ok and piv then return piv.Position.Y end
+    local r = rootOf(char)
+    return r and r.Position.Y or 0
 end
 
 --==============================================================
@@ -772,6 +771,14 @@ local function norm(s)
     return string.lower((tostring(s):gsub("[^%w]", "")))
 end
 
+local function matchesName(vmName, weapon)
+    if not weapon or not vmName then return false end
+    if vmName == weapon then return true end
+    local a, b = norm(vmName), norm(weapon)
+    if a == "" or b == "" then return false end
+    return a:find(b, 1, true) ~= nil or b:find(a, 1, true) ~= nil
+end
+
 local WEAR_ORDER = { "factorynew", "minimalwear", "fieldtested", "wellworn", "battlescarred" }
 
 local function firstSurface(inst)
@@ -838,7 +845,6 @@ local function isArmName(n)
         or isGloveName(n)
 end
 
--- модель в руках = ближайшая к камере, имя не нужно
 local function viewmodel()
     local cam = camera or Workspace.CurrentCamera
     if not cam then return nil end
@@ -861,28 +867,6 @@ local function viewmodel()
     return nil
 end
 
-local function gloveModel()
-    local cam = camera or Workspace.CurrentCamera
-    if not cam then return nil end
-    local best, bestScore = nil, 0
-    for _, o in ipairs(cam:GetChildren()) do
-        if o:IsA("Model") then
-            local score = 0
-            for _, p in ipairs(o:GetDescendants()) do
-                if p:IsA("BasePart") and isGloveName(norm(p.Name)) then score += 2
-                elseif p:IsA("BasePart") and isArmName(norm(p.Name)) then score += 1 end
-            end
-            local n = norm(o.Name)
-            if n:find("glove", 1, true) then score += 5 end
-            if score > bestScore then
-                best, bestScore = o, score
-            end
-        end
-    end
-    if bestScore > 0 then return best end
-    return nil
-end
-
 local function partNamesOf()
     local set = {}
     local folder = SkinsFolder and S.weapon and SkinsFolder:FindFirstChild(S.weapon)
@@ -895,6 +879,41 @@ local function partNamesOf()
     end
     return set
 end
+
+-- модель перчаток: по именам частей скина, по имени, по слову glove
+local function gloveModel()
+    local cam = camera or Workspace.CurrentCamera
+    if not cam then return nil end
+    local wanted = partNamesOf()
+    local best, bestScore = nil, 0
+
+    for _, o in ipairs(cam:GetChildren()) do
+        if o:IsA("Model") then
+            local score = 0
+            local n = norm(o.Name)
+            if S.weapon and matchesName(o.Name, S.weapon) then score += 10 end
+            if n:find("glove", 1, true) then score += 8 end
+            if n:find("arm", 1, true) then score += 2 end
+            for _, p in ipairs(o:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    local pn = norm(p.Name)
+                    if wanted[pn] then score += 5 end
+                    if isGloveName(pn) then score += 4 end
+                    if pn:find("strap", 1, true) or pn:find("buckle", 1, true) or pn:find("finger", 1, true) then
+                        score += 2
+                    end
+                end
+            end
+            if score > bestScore then
+                best, bestScore = o, score
+            end
+        end
+    end
+    if bestScore >= 4 then return best end
+    return nil
+end
+
+local pinnedGlove = nil
 
 local function findPart(vm, name)
     local exact = vm:FindFirstChild(name, true)
@@ -932,19 +951,15 @@ local function applySkinTo(vm, weapon, skin)
     if #sources == 0 then return nil end
 
     local gloves = categoryOf(weapon) == "gloves"
+    local onCharacter = vm == myChar()
     local parts = {}
     for _, p in ipairs(vm:GetDescendants()) do
         if p:IsA("BasePart") then
-            if not gloves then
-                parts[#parts + 1] = p
-            elseif isGloveName(norm(p.Name)) then
+            if gloves and onCharacter then
+                if isArmName(norm(p.Name)) then parts[#parts + 1] = p end
+            else
                 parts[#parts + 1] = p
             end
-        end
-    end
-    if #parts == 0 and gloves then
-        for _, p in ipairs(vm:GetDescendants()) do
-            if p:IsA("BasePart") and isArmName(norm(p.Name)) then parts[#parts + 1] = p end
         end
     end
     if #parts == 0 then
@@ -960,7 +975,8 @@ local function applySkinTo(vm, weapon, skin)
         local part = findPart(vm, sa.Name)
         if part and not used[part] then
             used[part] = true
-            refs[#refs + 1] = { part = part, sa = putSurface(part, sa) }
+            local clone = putSurface(part, sa)
+            refs[#refs + 1] = { part = part, sa = clone, map = clone.ColorMap }
         end
     end
     if #refs == 0 then
@@ -968,7 +984,8 @@ local function applySkinTo(vm, weapon, skin)
         for i, sa in ipairs(sources) do
             local part = parts[i]
             if not part then break end
-            refs[#refs + 1] = { part = part, sa = putSurface(part, sa) }
+            local clone = putSurface(part, sa)
+            refs[#refs + 1] = { part = part, sa = clone, map = clone.ColorMap }
         end
     end
     if #refs == 0 then return nil end
@@ -982,7 +999,7 @@ local function targetsFor()
     local cat = categoryOf(S.weapon or "")
     local out = {}
     if cat == "gloves" then
-        local g = gloveModel()
+        local g = (pinnedGlove and pinnedGlove.Parent) and pinnedGlove or gloveModel()
         if g then out[#out + 1] = g end
         local ch = myChar()
         if ch then out[#out + 1] = ch end
@@ -1000,7 +1017,9 @@ local function applyToTarget(vm)
     if rec and rec.sig == sig then
         local alive = true
         for _, r in ipairs(rec.refs) do
-            if not r.sa.Parent or r.part:FindFirstChildOfClass("SurfaceAppearance") ~= r.sa then
+            if not r.sa.Parent
+                or r.part:FindFirstChildOfClass("SurfaceAppearance") ~= r.sa
+                or r.sa.ColorMap ~= r.map then
                 alive = false
                 break
             end
@@ -1149,9 +1168,10 @@ end)
 
 local function respawn()
     if dead then return end
+    pinnedGlove = nil
     if S.weapon and S.skin then
         task.spawn(function()
-            for _ = 1, 30 do
+            for _ = 1, 40 do
                 if dead then break end
                 applySkin()
                 task.wait(0.1)
@@ -1169,10 +1189,15 @@ end))
 --  ПРЫЖОК
 --==============================================================
 local controls
-pcall(function()
-    local ps = lp:FindFirstChild("PlayerScripts")
-    local pm = ps and ps:FindFirstChild("PlayerModule")
-    if pm then controls = require(pm):GetControls() end
+task.spawn(function()
+    while not dead and not controls do
+        pcall(function()
+            local ps = lp:FindFirstChild("PlayerScripts")
+            local pm = ps and ps:FindFirstChild("PlayerModule")
+            if pm then controls = require(pm):GetControls() end
+        end)
+        task.wait(2)
+    end
 end)
 
 local fakeInput = {
@@ -1187,43 +1212,64 @@ fakeInput.IsA = function(_, class)
     return class == "InputObject" or class == "Instance" or class == "Object"
 end
 
-local bh = { nextAt = 0, lastY = 0, peak = 0, pending = 0, fails = 0, wheelArmed = 0, mode = "прыжок" }
+local jumpRemotes = {}
+local casActions = {}
+local scanAt = 0
+
+local function scanChannels(force)
+    local now = os.clock()
+    if not force and now - scanAt < 6 then return end
+    scanAt = now
+    jumpRemotes, casActions = {}, {}
+
+    local roots = { ReplicatedStorage, lp:FindFirstChild("PlayerScripts") }
+    for _, root in ipairs(roots) do
+        if root then
+            local ok, desc = pcall(function() return root:GetDescendants() end)
+            if ok then
+                for _, d in ipairs(desc) do
+                    if d:IsA("RemoteEvent") or d:IsA("UnreliableRemoteEvent") then
+                        local n = string.lower(d.Name)
+                        if n:find("jump", 1, true) or n:find("hop", 1, true) or n:find("leap", 1, true) then
+                            jumpRemotes[#jumpRemotes + 1] = d
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local ok, info = pcall(function() return CAS:GetAllBoundActionInfo() end)
+    if ok and type(info) == "table" then
+        for name, data in pairs(info) do
+            local types = type(data) == "table" and data.inputTypes
+            if type(types) == "table" then
+                for _, io in ipairs(types) do
+                    if io.KeyCode == Enum.KeyCode.Space then
+                        casActions[#casActions + 1] = { name = name, io = io }
+                        break
+                    end
+                end
+            end
+        end
+    end
+end
+
+local bh = { nextAt = 0, lastY = 0, peak = 0, pending = 0, fails = 0, wheelArmed = 0 }
 local lastState = "-"
 local lastChannels = "-"
 local jumpCount = 0
 
-local function fireInput()
-    local notes = {}
-    if controls then
-        pcall(function() controls:OnInputBegan(fakeInput, false) end)
-        notes[#notes + 1] = "ctrl"
-        local ok, m = pcall(function() return controls.OnJumpRequest end)
-        if ok and typeof(m) == "function" then
-            pcall(function() controls:OnJumpRequest() end)
-            notes[#notes + 1] = "ctrlJump"
-        end
-    end
-    pcall(function() UIS.InputBegan:Fire(fakeInput, false) end)
-    notes[#notes + 1] = "sig"
-    if typeof(keypress) == "function" then
-        pcall(keypress, Enum.KeyCode.Space, 0.03)
-    else
-        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false) end)
-        task.delay(0.03, function()
-            pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false) end)
-        end)
-    end
-    notes[#notes + 1] = "key"
-    return notes
-end
-
 local function attempt()
     local char = myChar()
-    local root = char and rootOf(char)
-    if not root then lastState = "нет персонажа" return end
+    if not char then lastState = "нет персонажа" return end
+    local root = rootOf(char)
     local hum = humOf(char)
-
     local notes = {}
+
+    pcall(function() UIS.JumpRequest:Fire() end)
+    notes[#notes + 1] = "jreq"
+
     if hum and hum.Health > 0 then
         pcall(function()
             if hum.UseJumpPower ~= true then hum.UseJumpPower = true end
@@ -1233,26 +1279,60 @@ local function attempt()
         notes[#notes + 1] = "hum"
     end
 
-    local v = root.AssemblyLinearVelocity
-    if v.Y < 45 then
-        if root.Anchored then pcall(function() root.Anchored = false end) end
-        pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, 52, v.Z) end)
-        notes[#notes + 1] = "vel"
+    for _, r in ipairs(jumpRemotes) do
+        if r.Parent then
+            task.spawn(function()
+                pcall(function() r:FireServer() end)
+                pcall(function() r:FireServer(true) end)
+            end)
+            notes[#notes + 1] = "remote"
+        end
     end
 
-    if S.lift then
-        local ok, cf = pcall(function() return root.CFrame end)
-        if ok and cf then
-            pcall(function() root.CFrame = cf + Vector3.new(0, 2.6, 0) end)
+    for _, a in ipairs(casActions) do
+        pcall(function() CAS:CallAction(a.name, Enum.UserInputState.Begin, a.io) end)
+        pcall(function() CAS:CallAction(a.name, Enum.UserInputState.End, a.io) end)
+    end
+    if #casActions > 0 then notes[#notes + 1] = "cas" end
+
+    if controls then
+        pcall(function() controls:OnInputBegan(fakeInput, false) end)
+        notes[#notes + 1] = "ctrl"
+    end
+
+    pcall(function() UIS.InputBegan:Fire(fakeInput, false) end)
+    notes[#notes + 1] = "sig"
+
+    if typeof(keypress) == "function" then
+        pcall(keypress, Enum.KeyCode.Space, 0.03)
+    else
+        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false) end)
+        task.delay(0.03, function()
+            pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false) end)
+        end)
+    end
+    notes[#notes + 1] = "key"
+
+    if root then
+        local v = root.AssemblyLinearVelocity
+        if v.Y < 45 then
+            if root.Anchored then pcall(function() root.Anchored = false end) end
+            pcall(function() root.AssemblyLinearVelocity = Vector3.new(v.X, 52, v.Z) end)
+            notes[#notes + 1] = "vel"
+        end
+        if S.lift then
+            pcall(function() root.CFrame = root.CFrame + Vector3.new(0, 2.6, 0) end)
+            local ok, piv = pcall(function() return char:GetPivot() end)
+            if ok and piv then
+                pcall(function() char:PivotTo(piv + Vector3.new(0, 2.6, 0)) end)
+            end
             notes[#notes + 1] = "lift"
         end
     end
 
-    for _, n in ipairs(fireInput()) do notes[#notes + 1] = n end
-
     lastChannels = table.concat(notes, "+")
     bh.pending = os.clock()
-    bh.lastY = root.Position.Y
+    bh.lastY = pivotY(char)
     bh.peak = 0
     jumpCount += 1
     lastState = "прыжок"
@@ -1263,10 +1343,9 @@ track(RunService.RenderStepped:Connect(function()
     pcall(function()
         local now = os.clock()
         local char = myChar()
-        local root = char and rootOf(char)
 
-        if bh.pending > 0 and root then
-            local dy = root.Position.Y - bh.lastY
+        if bh.pending > 0 and char then
+            local dy = pivotY(char) - bh.lastY
             if dy > bh.peak then bh.peak = dy end
             if now - bh.pending > 0.3 then
                 bh.pending = 0
@@ -1299,13 +1378,8 @@ track(RunService.RenderStepped:Connect(function()
         end
         if now < bh.nextAt then return end
 
-        local hum = char and humOf(char)
-        if root and root.AssemblyLinearVelocity.Y > 8 and not S.lift then
-            lastState = "в воздухе"
-            return
-        end
-
         bh.nextAt = now + S.interval
+        scanChannels(false)
         attempt()
     end)
 end))
@@ -1404,6 +1478,7 @@ button(skinPage, "Применить сейчас", function()
     if not S.skin then notify("Выбери скин") return end
     task.spawn(function()
         for vm in pairs(applied) do applied[vm] = nil end
+        pinnedGlove = nil
         local ok = false
         for _ = 1, 10 do
             if dead then break end
@@ -1413,8 +1488,20 @@ button(skinPage, "Применить сейчас", function()
         notify(ok and "Скин применён" or "Модель не найдена — возьми в руки")
     end)
 end)
+button(skinPage, "Привязать перчатки", function()
+    local g = gloveModel()
+    if g then
+        pinnedGlove = g
+        for vm in pairs(applied) do applied[vm] = nil end
+        notify("Привязано: " .. g.Name)
+        if S.weapon and S.skin then applySkin() end
+    else
+        notify("Модель перчаток не найдена")
+    end
+end)
 button(skinPage, "Сбросить", function()
     resetSkins()
+    pinnedGlove = nil
     notify("Сброшено")
 end)
 toggle(skinPage, "Держать скин", S.holdSkin, function(v) S.holdSkin = v end)
@@ -1430,7 +1517,7 @@ local status = new("TextLabel", {
     TextColor3 = Color3.fromRGB(140, 140, 160),
     BackgroundColor3 = Color3.fromRGB(13, 13, 18),
     BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, 34),
+    Size = UDim2.new(1, 0, 0, 44),
     TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true,
@@ -1442,8 +1529,9 @@ task.spawn(function()
     while not dead and task.wait(0.4) do
         local vm = viewmodel()
         local gl = gloveModel()
-        status.Text = string.format("в руках: %s\nперчатки: %s\nхуки: %s | применено: %s",
-            vm and vm.Name or "-", gl and gl.Name or "-", tostring(hooked), tostring(lastAppliedName))
+        status.Text = string.format("в руках: %s\nперчатки: %s\nпривязано: %s | хуки: %s",
+            vm and vm.Name or "-", gl and gl.Name or "-",
+            pinnedGlove and pinnedGlove.Name or "-", tostring(hooked))
     end
 end)
 
@@ -1453,7 +1541,7 @@ toggle(movePage, "Включить", S.bhop, function(v)
     bh.nextAt = 0
     bh.pending = 0
     bh.fails = 0
-    if not v then S.lift = false end
+    if v then scanChannels(true) end
 end)
 chips(movePage, {
     { name = "Пробел (зажать)", value = "space" },
@@ -1462,6 +1550,10 @@ chips(movePage, {
 }, S.trigger, function(v) S.trigger = v end, 3)
 slider(movePage, "Интервал", 15, 60, math.floor(S.interval * 100), function(v) S.interval = v / 100 end)
 toggle(movePage, "Подъём через CFrame", S.lift, function(v) S.lift = v end)
+button(movePage, "Пересканировать каналы", function()
+    scanChannels(true)
+    notify("ремоутов " .. #jumpRemotes .. " | действий " .. #casActions)
+end)
 
 local dbg = new("TextLabel", {
     Text = "—",
@@ -1470,7 +1562,7 @@ local dbg = new("TextLabel", {
     TextColor3 = Color3.fromRGB(140, 140, 160),
     BackgroundColor3 = Color3.fromRGB(13, 13, 18),
     BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, 30),
+    Size = UDim2.new(1, 0, 0, 40),
     TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true,
@@ -1484,7 +1576,9 @@ task.spawn(function()
             dbg.Text = "выключено"
             continue
         end
-        dbg.Text = string.format("rise %.1f | %d | %s | %s", bh.peak, jumpCount, lastState, lastChannels)
+        dbg.Text = string.format("rise %.1f | %d | %s | %s\nканалы: ремоутов %d, действий %d, контроллер %s",
+            bh.peak, jumpCount, lastState, lastChannels,
+            #jumpRemotes, #casActions, tostring(controls ~= nil))
     end
 end)
 
@@ -1512,9 +1606,6 @@ tabs.skin.BackgroundColor3 = Color3.fromRGB(32, 25, 62)
 tabBars.skin.Size = UDim2.new(0, 3, 0, 16)
 tabBars.skin.Position = UDim2.new(0, 0, 0.5, -8)
 
---==============================================================
---  ЗАПОЛНЕНИЕ СПИСКА
---==============================================================
 task.spawn(function()
     for _ = 1, 100 do
         if SkinsFolder or dead then break end
@@ -1556,9 +1647,6 @@ end)
 if S.fovEnabled then applyFov() end
 if S.weapon and S.skin then installHooks() end
 
---==============================================================
---  ВЫГРУЗКА
---==============================================================
 local function unload()
     saveConfig()
     dead = true
