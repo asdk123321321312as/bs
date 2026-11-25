@@ -1,5 +1,5 @@
 --[[  KittenScript for Blox Strike
-      SkinChanger (по системе SleepScript) · Camera FOV · Auto BunnyHop
+      Camera FOV · Auto BunnyHop · SkinChanger
       Toggle menu: RightShift
 ]]
 
@@ -10,7 +10,6 @@ local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = workspace
 local LocalPlayer = Players.LocalPlayer
 local env = (getgenv and getgenv()) or shared
 
@@ -399,9 +398,9 @@ local function addTab(name, iconText)
 	return scroll
 end
 
-local skinPage = addTab("Skins", "✦")
 local visualPage = addTab("Visuals", "◈")
 local movePage = addTab("Movement", "⇅")
+local skinPage = addTab("Skins", "✦")
 
 ---------------------------------------------------------------------------
 -- Элементы UI
@@ -569,31 +568,8 @@ local function makeSlider(parent, text, min, max, default, suffix, callback)
 	return { Set = function(v) set(v) end, Get = function() return value end }
 end
 
-local function makeButton(parent, text, callback, primary)
-	local b = create("TextButton", {
-		Size = UDim2.new(1, 0, 0, 36),
-		BackgroundColor3 = primary and C.Accent or C.Element,
-		BackgroundTransparency = primary and 0 or 0.15,
-		AutoButtonColor = false,
-		Font = Enum.Font.GothamMedium,
-		TextSize = 12,
-		TextColor3 = primary and C.White or C.Text,
-		Text = text,
-	}, parent)
-	corner(b, 12)
-	if not primary then stroke(b, C.Stroke, 1, 0.6) end
-	b.MouseEnter:Connect(function()
-		tween(b, 0.18, primary and { BackgroundColor3 = C.AccentDeep } or { BackgroundColor3 = C.Hover, TextColor3 = C.AccentDeep })
-	end)
-	b.MouseLeave:Connect(function()
-		tween(b, 0.18, primary and { BackgroundColor3 = C.Accent } or { BackgroundColor3 = C.Element, TextColor3 = C.Text })
-	end)
-	b.MouseButton1Click:Connect(callback)
-	return b
-end
-
 local openPopups = {}
-local function makeDropdown(parent, text, options, default, searchable, callback)
+local function makeDropdown(parent, text, options, default, callback)
 	local r = row(parent, 38)
 	local label = create("TextLabel", {
 		Position = UDim2.fromOffset(14, 0),
@@ -617,7 +593,8 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 
 	local clickable = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "" }, r)
 	local value = default
-	local popup, list, search, open = nil, nil, nil, false
+	local popup, open = nil, false
+	local ROW_H, MAX_H = 29, 212
 
 	local function close()
 		if not open then return end
@@ -630,95 +607,66 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 		pcall(function() p:Destroy() end)
 	end
 
-	local function build(filter)
-		if not list then return end
-		for _, child in ipairs(list:GetChildren()) do
-			if child:IsA("TextButton") then child:Destroy() end
-		end
-		local count = 0
-		for _, option in ipairs(options) do
-			if not filter or filter == "" or string.find(string.lower(option), string.lower(filter), 1, true) then
-				count += 1
-				local b = create("TextButton", {
-					Size = UDim2.new(1, 0, 0, 27),
-					BackgroundColor3 = option == value and C.Panel or C.Element,
-					AutoButtonColor = false,
-					Font = Enum.Font.Gotham,
-					TextSize = 11,
-					TextColor3 = option == value and C.AccentDeep or C.Text,
-					TextXAlignment = Enum.TextXAlignment.Left,
-					TextTruncate = Enum.TextTruncate.AtEnd,
-					Text = "   " .. option,
-				}, list)
-				corner(b, 7)
-				b.MouseEnter:Connect(function() tween(b, 0.12, { BackgroundColor3 = C.Hover }) end)
-				b.MouseLeave:Connect(function()
-					tween(b, 0.12, { BackgroundColor3 = option == value and C.Panel or C.Element })
-				end)
-				b.MouseButton1Click:Connect(function()
-					value = option
-					label.Text = option
-					callback(option)
-					close()
-				end)
-			end
-		end
-		list.CanvasSize = UDim2.new(0, 0, 0, count * 29 + 6)
-	end
-
 	clickable.MouseButton1Click:Connect(function()
 		if open then close() return end
 		for _, p in ipairs(table.clone(openPopups)) do pcall(function() p:Destroy() end) end
 		table.clear(openPopups)
-		if #options == 0 then
-			notify("Пусто", "Список ещё не загружен")
-			return
-		end
 		open = true
 		local pos = r.AbsolutePosition - main.AbsolutePosition
-		local width = math.max(200, r.AbsoluteSize.X)
+		local width = math.max(160, r.AbsoluteSize.X)
 		local x = math.clamp(pos.X, 8, math.max(8, main.AbsoluteSize.X - width - 8))
+		local listH = math.min(#options * ROW_H + 12, MAX_H)
+		local y = pos.Y + r.AbsoluteSize.Y + 5
+		if y + listH > main.AbsoluteSize.Y - 8 then
+			y = math.max(8, pos.Y - listH - 5)
+		end
 		popup = create("Frame", {
-			Position = UDim2.fromOffset(x, pos.Y + r.AbsoluteSize.Y + 5),
-			Size = UDim2.fromOffset(width, 210),
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(width, listH),
 			BackgroundColor3 = C.White,
-			BackgroundTransparency = 0.02,
 			ZIndex = 60,
 		}, main)
 		corner(popup, 12)
 		stroke(popup, C.Stroke, 1, 0.15)
 		table.insert(openPopups, popup)
 
-		if searchable then
-			search = create("TextBox", {
-				Position = UDim2.fromOffset(6, 6),
-				Size = UDim2.new(1, -12, 0, 27),
-				BackgroundColor3 = C.Element,
-				Font = Enum.Font.Gotham,
-				TextSize = 11,
-				TextColor3 = C.Text,
-				PlaceholderText = "Поиск...",
-				PlaceholderColor3 = C.Dim,
-				Text = "",
-				ClearTextOnFocus = false,
-				ZIndex = 61,
-			}, popup)
-			corner(search, 7)
-			search:GetPropertyChangedSignal("Text"):Connect(function() build(search.Text) end)
-		end
-
-		list = create("ScrollingFrame", {
-			Position = UDim2.fromOffset(6, searchable and 37 or 6),
-			Size = UDim2.new(1, -12, 1, searchable and -43 or -12),
+		local list = create("ScrollingFrame", {
+			Position = UDim2.fromOffset(6, 6),
+			Size = UDim2.new(1, -12, 1, -12),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
 			ScrollBarThickness = 3,
 			ScrollBarImageColor3 = C.Accent,
 			ZIndex = 61,
 		}, popup)
-		create("UIListLayout", { Padding = UDim.new(0, 2) }, list)
-		build("")
+		create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+
+		for _, option in ipairs(options) do
+			local b = create("TextButton", {
+				Size = UDim2.new(1, 0, 0, 27),
+				BackgroundColor3 = option == value and C.Panel or C.Element,
+				AutoButtonColor = false,
+				Font = Enum.Font.Gotham,
+				TextSize = 11,
+				TextColor3 = option == value and C.AccentDeep or C.Text,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Text = "   " .. option,
+				ZIndex = 61,
+			}, list)
+			corner(b, 7)
+			b.MouseEnter:Connect(function() tween(b, 0.12, { BackgroundColor3 = C.Hover }) end)
+			b.MouseLeave:Connect(function()
+				tween(b, 0.12, { BackgroundColor3 = option == value and C.Panel or C.Element })
+			end)
+			b.MouseButton1Click:Connect(function()
+				value = option
+				label.Text = option
+				callback(option)
+				close()
+			end)
+		end
 	end)
 
 	return {
@@ -728,436 +676,31 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 			label.Text = v
 		end,
 		Get = function() return value end,
-		SetOptions = function(o)
-			if type(o) ~= "table" then o = {} end
-			options = o
-			if open then build(search and search.Text or "") end
-		end,
 		Close = close,
 	}
 end
 
----------------------------------------------------------------------------
--- Скинчейнджер (система SleepScript)
----------------------------------------------------------------------------
-local WEAPONS = {
-	"AK-47", "M4A1", "M4A4", "M4A1-S", "AWP", "SSG-08", "AUG", "SG-553", "FAMAS",
-	"Galil", "SCAR-20", "G3SG1", "MP9", "MAC-10", "MP7", "MP5", "UMP-45", "P90",
-	"PP-Bizon", "Nova", "XM1014", "MAG-7", "Sawed-Off", "M249", "Negev", "Glock",
-	"Glock-18", "USP", "USP-S", "P2000", "P250", "Five-SeveN", "Tec-9", "CZ75",
-	"Dual Berettas", "Desert Eagle", "Deagle", "R8 Revolver", "M1911", "Revolver",
-}
-local KNIVES = {
-	"Karambit", "Butterfly Knife", "Butterfly", "M9 Bayonet", "Bayonet", "Flip Knife",
-	"Flip", "Gut Knife", "Gut", "Huntsman Knife", "Falchion Knife", "Bowie Knife",
-	"Shadow Daggers", "Skeleton Knife", "Skeleton", "Nomad Knife", "Paracord Knife",
-	"Survival Knife", "Ursus Knife", "Stiletto Knife", "Talon Knife", "Classic Knife",
-	"Kukri Knife", "Knife",
-}
-local GLOVES = {
-	"Sports Gloves", "Driver Gloves", "Hand Wraps", "Specialist Gloves", "Moto Gloves",
-	"Bloodhound Gloves", "Broken Fang Gloves", "Hydra Gloves", "Operator Gloves",
-	"Gloves", "Default Gloves",
-}
-
-local BUILTIN_SKINS = {
-	["★ Gold"] = { Color = Color3.fromRGB(255, 202, 84), Material = "Metal" },
-	["★ Chrome"] = { Color = Color3.fromRGB(226, 230, 240), Material = "Metal", Reflectance = 0.5 },
-	["★ Carbon"] = { Color = Color3.fromRGB(28, 28, 32), Material = "Metal" },
-	["★ Fade"] = { Color = Color3.fromRGB(255, 130, 195), Material = "SmoothPlastic" },
-	["★ Crimson"] = { Color = Color3.fromRGB(185, 28, 42), Material = "Metal" },
-	["★ Neon Purple"] = { Color = Color3.fromRGB(168, 96, 255), Material = "Neon" },
-	["★ Neon Blue"] = { Color = Color3.fromRGB(70, 170, 255), Material = "Neon" },
-	["★ Neon Green"] = { Color = Color3.fromRGB(80, 255, 150), Material = "Neon" },
-	["★ Toxic"] = { Color = Color3.fromRGB(190, 255, 60), Material = "Neon" },
-	["★ Obsidian"] = { Color = Color3.fromRGB(12, 12, 16), Material = "Glass", Reflectance = 0.4 },
-	["★ Frost"] = { Color = Color3.fromRGB(180, 230, 255), Material = "Ice", Reflectance = 0.3 },
-	["★ Sand"] = { Color = Color3.fromRGB(214, 188, 140), Material = "Sand" },
-	["★ White"] = { Color = Color3.fromRGB(245, 245, 250), Material = "SmoothPlastic" },
-}
-
-local Skin = {
-	Enabled = false,
-	Assignments = {},
-	Library = {},
-	Tracked = {},
-	Desired = {},
-	Originals = {},
-	HiddenSA = {},
-	Detected = "-",
-	Parts = 0,
-}
-
-local function clean(s)
-	return (s:lower():gsub("[%s_%-%.]", ""))
-end
-
-local ALL_NAMES = {}
-for _, t in ipairs({ WEAPONS, KNIVES, GLOVES }) do
-	for _, n in ipairs(t) do
-		ALL_NAMES[#ALL_NAMES + 1] = n
-	end
-end
-
-local function detectWeapon(model)
-	if not model then return nil end
-	local names = { model.Name }
-	for _, d in ipairs(model:GetChildren()) do
-		names[#names + 1] = d.Name
-	end
-	for _, n in ipairs(names) do
-		local c = clean(n)
-		for _, w in ipairs(ALL_NAMES) do
-			local cw = clean(w)
-			if #cw >= 3 and (c == cw or c:find(cw, 1, true)) then return w end
-		end
-	end
-end
-
-local function buildLibrary()
-	Skin.Library = {}
-	local seen = {}
-	local function add(name, id)
-		if not id or type(id) ~= "string" or id == "" then return end
-		if seen[id] then return end
-		seen[id] = true
-		local key = name
-		if Skin.Library[key] then key = name .. " #" .. tostring(math.random(1000, 9999)) end
-		Skin.Library[key] = id
-	end
-	local n = 0
-	for _, d in ipairs(ReplicatedStorage:GetDescendants()) do
-		n = n + 1
-		if n > 50000 then break end
-		local id
-		if d:IsA("Decal") or d:IsA("Texture") then
-			id = d.Texture
-		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
-			id = d.Image
-		elseif d:IsA("SurfaceAppearance") then
-			id = d.ColorMap
-		elseif d:IsA("MeshPart") then
-			id = d.TextureID
-		elseif d:IsA("StringValue") then
-			local v = d.Value
-			if type(v) == "string" and (v:find("rbxassetid") or v:find("asset/?id=")) then id = v end
-		end
-		if id then add(d.Name, id) end
-	end
-	local total = 0
-	for _ in pairs(Skin.Library) do total = total + 1 end
-	return total
-end
-
-local function skinOptions()
-	local o = { "None" }
-	local k = {}
-	for key in pairs(BUILTIN_SKINS) do k[#k + 1] = key end
-	table.sort(k)
-	for _, key in ipairs(k) do o[#o + 1] = key end
-	local g = {}
-	for key in pairs(Skin.Library) do g[#g + 1] = key end
-	table.sort(g)
-	for _, key in ipairs(g) do o[#o + 1] = key end
-	return o
-end
-
-local function clearSkinChildren(part)
-	for _, c in ipairs(part:GetChildren()) do
-		if c.Name:sub(1, 9) == "KittenSkin" then c:Destroy() end
-	end
-end
-
-local function hideSA(part)
-	local sa = part:FindFirstChildOfClass("SurfaceAppearance")
-	if sa and not Skin.HiddenSA[part] then
-		Skin.HiddenSA[part] = sa
-		sa.Parent = nil
-	end
-end
-
-local function restoreSA(part)
-	local sa = Skin.HiddenSA[part]
-	if sa then
-		pcall(function() sa.Parent = part end)
-		Skin.HiddenSA[part] = nil
-	end
-end
-
-local function applyTexture(part, id)
-	if not id or id == "" then
-		clearSkinChildren(part)
-		restoreSA(part)
-		return
-	end
-	hideSA(part)
-	if part:IsA("MeshPart") then pcall(function() part.TextureID = id end) end
-	local sm = part:FindFirstChildOfClass("SpecialMesh")
-	if sm then pcall(function() sm.TextureId = id end) end
-	if not part:IsA("MeshPart") and not sm then
-		for i, f in ipairs({ "Front", "Back", "Left", "Right", "Top", "Bottom" }) do
-			local t = part:FindFirstChild("KittenSkin" .. i)
-			if not t then
-				t = create("Texture", {
-					Name = "KittenSkin" .. i,
-					Face = Enum.NormalId[f],
-					StudsPerTileU = 1,
-					StudsPerTileV = 1,
-				}, part)
-			end
-			t.Texture = id
-		end
-	end
-end
-
-local function assignmentFor(model)
-	local det = detectWeapon(model)
-	if det and Skin.Assignments[det] then return Skin.Assignments[det] end
-	if Skin.Assignments["*"] then return Skin.Assignments["*"] end
-	return nil
-end
-
-local function stylePart(part, model)
-	if not part:IsA("BasePart") then return end
-	local skinName = assignmentFor(model)
-	if not skinName or skinName == "None" then return end
-	if not Skin.Originals[part] then
-		Skin.Originals[part] = {
-			Material = part.Material,
-			Color = part.Color,
-			Reflectance = part.Reflectance,
-			TextureID = part:IsA("MeshPart") and part.TextureID or nil,
-		}
-	end
-
-	local color, material, texture
-	local b = BUILTIN_SKINS[skinName]
-	if b then
-		color = b.Color
-		if b.Material then material = Enum.Material[b.Material] end
-	else
-		local id = Skin.Library[skinName]
-		if id then
-			texture = id
-			color = Color3.new(1, 1, 1)
-		end
-	end
-
-	if texture then applyTexture(part, texture) else clearSkinChildren(part) restoreSA(part) end
-	if color then part.Color = color end
-	if material then part.Material = material end
-
-	Skin.Desired[part] = { Color = color, Material = material, Texture = texture, Skin = skinName }
-end
-
-local function restorePart(part)
-	local o = Skin.Originals[part]
-	if o then
-		pcall(function()
-			part.Material = o.Material
-			part.Color = o.Color
-			part.Reflectance = o.Reflectance
-			if o.TextureID and part:IsA("MeshPart") then part.TextureID = o.TextureID end
-		end)
-	end
-	clearSkinChildren(part)
-	restoreSA(part)
-	Skin.Desired[part] = nil
-end
-
-local function isViewModel(m)
-	if not m:IsA("Model") then return false end
-	if m.Parent == Workspace.CurrentCamera then return true end
-	local n = m.Name:lower()
-	return n:find("view") or n:find("worldmodel") or n:find("arms") or n:find("hands")
-		or n:find("weapon") or n:find("fps") or n:find("tool")
-end
-
-local function collectParts()
-	local out = {}
-	local cam = Workspace.CurrentCamera
-	local camPos = cam and cam.CFrame.Position
-	local function push(part, model)
-		out[#out + 1] = { part = part, model = model }
-	end
-
-	if cam then
-		for _, c in ipairs(cam:GetChildren()) do
-			if c:IsA("BasePart") then
-				push(c, c)
-			elseif c:IsA("Model") or c:IsA("Folder") then
-				for _, d in ipairs(c:GetDescendants()) do
-					if d:IsA("BasePart") then push(d, c) end
-				end
-			end
-		end
-	end
-	for _, c in ipairs(Workspace:GetChildren()) do
-		if isViewModel(c) then
-			for _, d in ipairs(c:GetDescendants()) do
-				if d:IsA("BasePart") then push(d, c) end
-			end
-		end
-	end
-	if camPos then
-		for _, c in ipairs(Workspace:GetChildren()) do
-			if c:IsA("Model") and not isViewModel(c) and not Players:GetPlayerFromCharacter(c) then
-				local ok, ext = pcall(function() return c:GetExtentsSize() end)
-				if ok and ext and ext.Magnitude < 30 then
-					local parts, near = {}, false
-					for _, d in ipairs(c:GetDescendants()) do
-						if d:IsA("BasePart") then
-							parts[#parts + 1] = d
-							if not near and (d.Position - camPos).Magnitude < 14 then near = true end
-						end
-					end
-					if near and #parts <= 60 then
-						for _, d in ipairs(parts) do push(d, c) end
-					end
-				end
-			end
-		end
-	end
-	return out
-end
-
-local function scanForParts()
-	if not Skin.Enabled then return end
-	local list = collectParts()
-	Skin.Parts = #list
-	for _, e in ipairs(list) do
-		Skin.Tracked[e.part] = true
-		local det = detectWeapon(e.model)
-		if det then Skin.Detected = det end
-		stylePart(e.part, e.model)
-	end
-end
-
-local function restyleAll()
-	for part in pairs(Skin.Desired) do
-		if not part.Parent then
-			Skin.Desired[part] = nil
-			Skin.Tracked[part] = nil
-			Skin.Originals[part] = nil
-		end
-	end
-	if Skin.Enabled then scanForParts() end
-end
-
-local function clearAll()
-	for part in pairs(Skin.Originals) do
-		if part and part.Parent then restorePart(part) end
-	end
-	Skin.Originals, Skin.Desired, Skin.Tracked = {}, {}, {}
-end
-
-local function enforceDesired()
-	if not Skin.Enabled then return end
-	for part, d in pairs(Skin.Desired) do
-		if part.Parent then
-			if d.Color and part.Color ~= d.Color then part.Color = d.Color end
-			if d.Material and part.Material ~= d.Material then part.Material = d.Material end
-			if d.Texture and part:IsA("MeshPart") and part.TextureID ~= d.Texture then
-				pcall(function() part.TextureID = d.Texture end)
-			end
-		end
-	end
-end
-
-bind(Workspace:GetPropertyChangedSignal("CurrentCamera"), function()
-	Skin.Tracked, Skin.Desired = {}, {}
-	if Skin.Enabled then scanForParts() end
-end)
-
----------------------------------------------------------------------------
--- Вкладка Skins
----------------------------------------------------------------------------
-do
-	local status = makeLabel(skinPage, "detected: -   |   parts: 0   |   game skins: 0")
-	local function updStatus()
-		local n = 0
-		for _ in pairs(Skin.Library) do n = n + 1 end
-		status.Text = string.format("detected: %s   |   parts: %d   |   game skins: %d", Skin.Detected, Skin.Parts, n)
-	end
-
-	makeToggle(skinPage, "Включить скинчейнджер", false, function(v)
-		Skin.Enabled = v
-		if v then
-			scanForParts()
-			notify("Skin", "отслежено " .. Skin.Parts .. " частей")
-		else
-			clearAll()
-		end
-		updStatus()
+local function makeButton(parent, text, callback)
+	local r = row(parent, 34)
+	r.BackgroundColor3 = C.Accent
+	r.BackgroundTransparency = 0.08
+	local l = create("TextLabel", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = C.White,
+		Text = text,
+	}, r)
+	local clickable = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "" }, r)
+	clickable.MouseEnter:Connect(function() tween(r, 0.15, { BackgroundTransparency = 0 }) end)
+	clickable.MouseLeave:Connect(function() tween(r, 0.15, { BackgroundTransparency = 0.08 }) end)
+	clickable.MouseButton1Click:Connect(function()
+		tween(l, 0.1, { TextTransparency = 0.4 })
+		task.delay(0.1, function() tween(l, 0.15, { TextTransparency = 0 }) end)
+		callback()
 	end)
-
-	section(skinPage, "Оружие и скин")
-	local weaponOptions = { "Auto (всё)" }
-	for _, w in ipairs(WEAPONS) do weaponOptions[#weaponOptions + 1] = w end
-	for _, k in ipairs(KNIVES) do weaponOptions[#weaponOptions + 1] = k end
-	for _, g in ipairs(GLOVES) do weaponOptions[#weaponOptions + 1] = g end
-
-	local weaponDropdown = makeDropdown(skinPage, "Auto (всё)", weaponOptions, "Auto (всё)", true, function() end)
-	local skinDropdown = makeDropdown(skinPage, "★ Gold", skinOptions(), "★ Gold", true, function() end)
-
-	makeButton(skinPage, "ПРИМЕНИТЬ СКИН", function()
-		local w = weaponDropdown.Get()
-		local s = skinDropdown.Get()
-		local key = (w == "Auto (всё)") and "*" or w
-		Skin.Assignments[key] = s
-		if not Skin.Enabled then
-			Skin.Enabled = true
-			notify("Skin", "скинчейнджер включён")
-		end
-		scanForParts()
-		restyleAll()
-		updStatus()
-		if skinListLabel then skinListLabel.Text = "" end
-		updList()
-		notify("Skin", w .. " → " .. s)
-	end, true)
-
-	makeButton(skinPage, "Убрать скин с этого оружия", function()
-		local w = weaponDropdown.Get()
-		local key = (w == "Auto (всё)") and "*" or w
-		Skin.Assignments[key] = nil
-		clearAll()
-		restyleAll()
-		updList()
-		notify("Skin", "убрано: " .. w)
-	end)
-
-	makeButton(skinPage, "Пересканировать скины игры", function()
-		local n = buildLibrary()
-		skinDropdown.SetOptions(skinOptions())
-		updStatus()
-		notify("Skin", "найдено " .. n .. " скинов в файлах")
-	end)
-
-	section(skinPage, "Назначения")
-	local skinListLabel
-	local function updList()
-		if not skinListLabel then return end
-		local parts = {}
-		for k, v in pairs(Skin.Assignments) do
-			parts[#parts + 1] = (k == "*" and "ВСЁ" or k) .. " → " .. v
-		end
-		table.sort(parts)
-		skinListLabel.Text = #parts > 0 and table.concat(parts, "\n") or "пусто"
-	end
-	skinListLabel = makeLabel(skinPage, "пусто")
-
-	bind(RunService.Heartbeat, function()
-		local timer = os.clock()
-		if timer < (skinPage.timer or 0) then return end
-		skinPage.timer = timer + 0.25
-		if Skin.Enabled then pcall(scanForParts) end
-		pcall(enforceDesired)
-		pcall(updStatus)
-		pcall(updList)
-	end)
-
-	updStatus()
+	return r
 end
 
 ---------------------------------------------------------------------------
@@ -1302,11 +845,425 @@ do
 			notify("BHop", "Резервный режим — хук ещё не готов")
 		end
 	end)
-	makeDropdown(movePage, "Режим", { "Auto", "Hold" }, "Auto", false, function(v) Bhop.Mode = v end)
+	makeDropdown(movePage, "Режим", { "Auto", "Hold" }, "Auto", function(v) Bhop.Mode = v end)
 
 	section(movePage, "Инфо")
 	makeLabel(movePage, "Auto — прыгает сам при касании земли.\nHold — только пока зажата кнопка прыжка.\nJump на колесо и стрейфы A/D держат скорость.")
 end
+
+---------------------------------------------------------------------------
+-- Вкладка Skins — скинченджер
+---------------------------------------------------------------------------
+local Skins = {
+	Root = nil,
+	Selections = {},
+	GloveSelections = {},
+	GloveFolders = {},
+	Enabled = false,
+	KnifeEnabled = false,
+	KnifeModel = "Skeleton Knife",
+	GloveEnabled = false,
+	GloveModel = nil,
+	Gloves = {},
+	Supported = true,
+	Hooked = false,
+	Modules = {},
+	Originals = {},
+}
+
+do
+	local ex = "Unknown"
+	pcall(function()
+		if type(identifyexecutor) == "function" then ex = select(1, identifyexecutor()) or "Unknown" end
+	end)
+	for _, name in ipairs({ "RonixExploit", "Xeno", "Solara" }) do
+		if string.find(ex, name, 1, true) then Skins.Supported = false end
+	end
+end
+
+pcall(function()
+	Skins.Root = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("Skins")
+end)
+
+if Skins.Root then
+	pcall(function()
+		for _, weaponFolder in ipairs(Skins.Root:GetChildren()) do
+			local list = {}
+			for _, skinFolder in ipairs(weaponFolder:GetChildren()) do
+				list[#list + 1] = skinFolder.Name
+			end
+			table.sort(list)
+			Skins.Selections[weaponFolder.Name] = (#list > 0) and list or { "Default" }
+		end
+		for _, folder in ipairs(Skins.Root:GetChildren()) do
+			local n = folder.Name
+			local isGlove = (n:match("Glove") or n:match("Gloves") or n == "Hand Wraps")
+			local isSideGlove = (n:match("T Glove") or n:match("CT Glove"))
+			if isGlove and not isSideGlove then
+				Skins.GloveFolders[#Skins.GloveFolders + 1] = folder
+			end
+		end
+	end)
+end
+
+local BASE_KNIVES = { "CT Knife", "T Knife", "Knife" }
+local KNIFE_MODELS = { "Karambit", "Butterfly Knife", "Flip Knife", "Gut Knife", "M9 Bayonet", "Skeleton Knife", "Stiletto Knife" }
+local EXTRA_GLOVES = { "Driver Gloves", "Sports Gloves", "Operator Gloves", "Hand Wraps" }
+
+local function isBaseKnife(w)
+	if not w then return false end
+	for _, k in ipairs(BASE_KNIVES) do
+		if w == k then return true end
+	end
+	return false
+end
+
+local function SafeRequire(module)
+	if not module then return nil end
+	local ok, result = pcall(function() return require(module) end)
+	if ok and type(result) == "table" then return result end
+	return nil
+end
+
+local function UpdateInventoryNames()
+	local invGui = LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+	if not invGui then return end
+	local gameplay = invGui:FindFirstChild("Gameplay")
+	if not gameplay then return end
+	local bottom = gameplay:FindFirstChild("Bottom")
+	if not bottom then return end
+	local inv = bottom:FindFirstChild("Inventory")
+	if not inv then return end
+	local meleeSlot = inv:FindFirstChild("Melee")
+	if not (meleeSlot and Skins.KnifeEnabled) then return end
+	local weapon = meleeSlot:FindFirstChild("Weapon")
+	if not weapon then return end
+	local weaponName = weapon:FindFirstChild("WeaponName")
+	if not (weaponName and weaponName:IsA("TextLabel")) then return end
+	local model = Skins.KnifeModel
+	local sel = Skins.Selections[model]
+	local star = utf8.char(9733)
+	if sel and sel ~= "Default" then
+		weaponName.Text = star .. " " .. model .. " | " .. sel
+	else
+		weaponName.Text = star .. " " .. model
+	end
+end
+
+local function GetWeaponModel()
+	local camera = workspace.CurrentCamera
+	if not camera then return nil end
+	for _, child in ipairs(camera:GetChildren()) do
+		if child:IsA("Model") and child.Name ~= "Arms" and child.Name ~= "Arms1" and child.Name ~= "Arms2" and child.Name ~= "Viewmodel" then
+			return child
+		end
+	end
+	return nil
+end
+
+local function ApplySkin()
+	if not Skins.Root then return end
+	local weaponModel = GetWeaponModel()
+	if not weaponModel then return end
+	local own = weaponModel.Name
+	local target = own
+	local allowed = false
+	if isBaseKnife(own) then
+		if Skins.KnifeEnabled then
+			target = Skins.KnifeModel
+			allowed = true
+		end
+	elseif Skins.Enabled then
+		allowed = true
+	end
+	if not allowed then return end
+	local selection = Skins.Selections[target]
+	if not selection or selection == "Default" then return end
+	local weaponFolder = Skins.Root:FindFirstChild(target)
+	if not weaponFolder then return end
+	local skinFolder = weaponFolder:FindFirstChild(selection)
+	if not skinFolder then return end
+	local cameraFolder = skinFolder:FindFirstChild("Camera")
+	if not cameraFolder then return end
+	local factoryNew = cameraFolder:FindFirstChild("Factory New")
+	if not factoryNew then return end
+	for _, appearance in ipairs(factoryNew:GetChildren()) do
+		if appearance:IsA("SurfaceAppearance") then
+			local part = weaponModel:FindFirstChild(appearance.Name, true)
+			if part and (part:IsA("BasePart") or part:IsA("MeshPart")) then
+				for _, old in ipairs(part:GetChildren()) do
+					if old:IsA("SurfaceAppearance") then old:Destroy() end
+				end
+				appearance:Clone().Parent = part
+			end
+		end
+	end
+	UpdateInventoryNames()
+end
+
+local function ApplyGloves()
+	if not Skins.GloveEnabled or not Skins.Root then return end
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+	local armsModel
+	for _, child in ipairs(camera:GetChildren()) do
+		if child:IsA("Model") and (child.Name:match("Arms") or child:FindFirstChild("Right Arm")) then
+			armsModel = child
+			break
+		end
+	end
+	if not armsModel then return end
+	local leftArm = armsModel:FindFirstChild("Left Arm")
+	local rightArm = armsModel:FindFirstChild("Right Arm")
+	if not (leftArm and rightArm) then return end
+	local leftGlove = leftArm:FindFirstChild("Glove")
+	local rightGlove = rightArm:FindFirstChild("Glove")
+	if not (leftGlove and rightGlove) then return end
+	for _, glovePart in ipairs({ leftGlove, rightGlove }) do
+		for _, old in ipairs(glovePart:GetChildren()) do
+			if old:IsA("SurfaceAppearance") then old:Destroy() end
+		end
+	end
+	local model = Skins.GloveModel
+	if not model then return end
+	local selection = Skins.Gloves[model]
+	if not selection or selection == "Default" then return end
+	local gloveFolder = Skins.Root:FindFirstChild(model)
+	if not gloveFolder then return end
+	local variant = gloveFolder:FindFirstChild(selection)
+	if not variant then return end
+	local cameraFolder = variant:FindFirstChild("Camera")
+	if not cameraFolder then return end
+	local factoryNew = cameraFolder:FindFirstChild("Factory New")
+	if not factoryNew then return end
+	for _, appearance in ipairs(factoryNew:GetChildren()) do
+		if appearance:IsA("SurfaceAppearance") then
+			appearance:Clone().Parent = leftGlove
+			appearance:Clone().Parent = rightGlove
+		end
+	end
+end
+
+local function InitSkinHooks()
+	if not Skins.Supported or Skins.Hooked then return end
+	pcall(function()
+		local db = ReplicatedStorage:FindFirstChild("Database")
+		local components = db and db:FindFirstChild("Components")
+		local libraries = components and components:FindFirstChild("Libraries")
+		local skinModule = libraries and libraries:FindFirstChild("Skins")
+		local classes = ReplicatedStorage:FindFirstChild("Classes")
+		local weaponComponent = classes and classes:FindFirstChild("WeaponComponent")
+		local classFolder = weaponComponent and weaponComponent:FindFirstChild("Classes")
+		local viewmodelModule = classFolder and classFolder:FindFirstChild("Viewmodel")
+		if not skinModule or not viewmodelModule then return end
+		local skinLib = SafeRequire(skinModule)
+		local viewmodelLib = SafeRequire(viewmodelModule)
+		if not skinLib or not viewmodelLib then return end
+		Skins.Modules.Skins = skinLib
+		Skins.Modules.Viewmodel = viewmodelLib
+
+		local function knifeSubstitute()
+			if not Skins.KnifeEnabled then return nil end
+			return Skins.KnifeModel, Skins.Selections[Skins.KnifeModel] or "Vanilla"
+		end
+
+		local originalGetCameraModel = skinLib.GetCameraModel
+		Skins.Originals.GetCameraModel = originalGetCameraModel
+		skinLib.GetCameraModel = function(w, sk, ...)
+			if Skins.KnifeEnabled and w and isBaseKnife(w) then
+				local newKnife, newSkin = knifeSubstitute()
+				local ok, result = pcall(originalGetCameraModel, newKnife, newSkin, ...)
+				if ok and result then return result end
+			end
+			local ok, result = pcall(originalGetCameraModel, w, sk, ...)
+			if ok then return result end
+			return nil
+		end
+
+		local originalGetCharacterModel = skinLib.GetCharacterModel
+		Skins.Originals.GetCharacterModel = originalGetCharacterModel
+		skinLib.GetCharacterModel = function(w, sk, ...)
+			if Skins.KnifeEnabled and w and isBaseKnife(w) then
+				local newKnife, newSkin = knifeSubstitute()
+				local ok, result = pcall(originalGetCharacterModel, newKnife, newSkin, ...)
+				if ok and result then return result end
+			end
+			local ok, result = pcall(originalGetCharacterModel, w, sk, ...)
+			if ok then return result end
+			return nil
+		end
+
+		local originalViewmodelNew = viewmodelLib.new
+		Skins.Originals.ViewmodelNew = originalViewmodelNew
+		viewmodelLib.new = function(viewmodelClass, w, sk, ...)
+			if Skins.KnifeEnabled and w and isBaseKnife(w) then
+				local newKnife, newSkin = knifeSubstitute()
+				local ok, result = pcall(originalViewmodelNew, viewmodelClass, newKnife, newSkin, ...)
+				if ok and result then return result end
+			end
+			local ok, result = pcall(originalViewmodelNew, viewmodelClass, w, sk, ...)
+			if ok then return result end
+			return nil
+		end
+
+		if skinLib.GetGloves then
+			local originalGetGloves = skinLib.GetGloves
+			Skins.Originals.GetGloves = originalGetGloves
+			skinLib.GetGloves = function(g, sk)
+				if Skins.GloveEnabled and Skins.GloveModel then
+					local model = Skins.GloveModel
+					local selection = Skins.Gloves[model] or "Default"
+					local ok, result = pcall(originalGetGloves, model, selection)
+					if ok and result then return result end
+				end
+				local ok, result = pcall(originalGetGloves, g, sk)
+				if ok then return result end
+				return nil
+			end
+		end
+
+		Skins.Hooked = true
+	end)
+end
+
+---------------------------------------------------------------------------
+-- UI скинченджера
+---------------------------------------------------------------------------
+local skinHandles, knifeHandles, gloveHandles = {}, {}, {}
+
+do
+	section(skinPage, "Скины оружия")
+
+	if not Skins.Root then
+		makeLabel(skinPage, "ReplicatedStorage.Assets.Skins не найден — скинченджер не активен.")
+	else
+		makeToggle(skinPage, "Включить скины оружия", false, function(v)
+			Skins.Enabled = v
+			if v then
+				task.spawn(ApplySkin)
+				notify("Skins", "Скины оружия включены")
+			end
+		end)
+
+		local weaponNames = {}
+		for weapon in pairs(Skins.Selections) do
+			if not table.find(KNIFE_MODELS, weapon) and not table.find(EXTRA_GLOVES, weapon) then
+				weaponNames[#weaponNames + 1] = weapon
+			end
+		end
+		table.sort(weaponNames)
+
+		for _, weapon in ipairs(weaponNames) do
+			local list = Skins.Selections[weapon]
+			Skins.Selections[weapon] = list[1]
+			skinHandles[weapon] = makeDropdown(skinPage, weapon, list, list[1], function(v)
+				Skins.Selections[weapon] = v
+			end)
+		end
+	end
+
+	section(skinPage, "Ножи")
+
+	if Skins.Supported then
+		makeToggle(skinPage, "Включить смену ножей", false, function(v)
+			Skins.KnifeEnabled = v
+			UpdateInventoryNames()
+			if v then notify("Skins", "Смена ножей включена") end
+		end)
+		makeDropdown(skinPage, "Модель ножа", KNIFE_MODELS, Skins.KnifeModel, function(v)
+			Skins.KnifeModel = v
+			UpdateInventoryNames()
+		end)
+		for _, knife in ipairs(KNIFE_MODELS) do
+			local list = Skins.Selections[knife]
+			if list then
+				Skins.Selections[knife] = list[1]
+				knifeHandles[knife] = makeDropdown(skinPage, "Скин: " .. knife, list, list[1], function(v)
+					Skins.Selections[knife] = v
+				end)
+			end
+		end
+	else
+		makeLabel(skinPage, "Смена ножей недоступна на этом экзекьюторе (нужен hookfunction).")
+	end
+
+	section(skinPage, "Перчатки")
+
+	if #Skins.GloveFolders > 0 then
+		local gloveModels = {}
+		for _, folder in ipairs(Skins.GloveFolders) do
+			local list = { "Default" }
+			for _, skin in ipairs(folder:GetChildren()) do
+				list[#list + 1] = skin.Name
+			end
+			Skins.GloveSelections[folder.Name] = list
+			Skins.Gloves[folder.Name] = "Default"
+			gloveModels[#gloveModels + 1] = folder.Name
+		end
+		table.sort(gloveModels)
+		Skins.GloveModel = gloveModels[1]
+
+		makeToggle(skinPage, "Включить смену перчаток", false, function(v)
+			Skins.GloveEnabled = v
+			if v then
+				task.spawn(ApplyGloves)
+				notify("Skins", "Смена перчаток включена")
+			end
+		end)
+		makeDropdown(skinPage, "Модель перчаток", gloveModels, gloveModels[1], function(v)
+			Skins.GloveModel = v
+		end)
+		for _, glove in ipairs(gloveModels) do
+			local list = Skins.GloveSelections[glove]
+			gloveHandles[glove] = makeDropdown(skinPage, "Скин: " .. glove, list, list[1], function(v)
+				Skins.Gloves[glove] = v
+			end)
+		end
+	else
+		makeLabel(skinPage, "Папки перчаток не найдены.")
+	end
+
+	section(skinPage, "Конфиг")
+
+	makeButton(skinPage, "Force Apply Now", function()
+		pcall(ApplySkin)
+		pcall(ApplyGloves)
+		notify("Skins", "Скины применены принудительно")
+	end)
+
+	makeButton(skinPage, "Reset All Skins", function()
+		for weapon, list in pairs(Skins.Selections) do
+			local first = (type(list) == "table") and list[1] or list
+			if first then
+				Skins.Selections[weapon] = first
+				local handle = skinHandles[weapon] or knifeHandles[weapon]
+				if handle then pcall(function() handle:Set(first) end) end
+			end
+		end
+		for glove, list in pairs(Skins.GloveSelections) do
+			Skins.Gloves[glove] = "Default"
+			local handle = gloveHandles[glove]
+			if handle then pcall(function() handle:Set("Default") end) end
+			pcall(function() handle:Set(list[1] or "Default") end)
+		end
+		pcall(ApplySkin)
+		pcall(ApplyGloves)
+		notify("Skins", "Все скины сброшены")
+	end)
+
+	makeLabel(skinPage, "Скины накатываются на текущий вьюмодель каждые 0.5 с. Ножи подменяются на уровне модуля Viewmodel, поэтому чужая модель видна сразу после перезахода в бой.")
+end
+
+task.spawn(function()
+	if Skins.Supported then InitSkinHooks() end
+	while true do
+		pcall(function()
+			if Skins.Enabled or Skins.KnifeEnabled then ApplySkin() end
+			if Skins.GloveEnabled then ApplyGloves() end
+		end)
+		task.wait(0.5)
+	end
+end)
 
 ---------------------------------------------------------------------------
 -- Открытие / закрытие
@@ -1347,7 +1304,15 @@ function gui:Unload()
 	if BhopState.Module and BhopState.Module.SampleInput == BhopState.Wrapper then
 		BhopState.Module.SampleInput = BhopState.Original
 	end
-	pcall(clearAll)
+	local skinLib, viewmodelLib = Skins.Modules.Skins, Skins.Modules.Viewmodel
+	if skinLib then
+		if Skins.Originals.GetCameraModel then skinLib.GetCameraModel = Skins.Originals.GetCameraModel end
+		if Skins.Originals.GetCharacterModel then skinLib.GetCharacterModel = Skins.Originals.GetCharacterModel end
+		if Skins.Originals.GetGloves then skinLib.GetGloves = Skins.Originals.GetGloves end
+	end
+	if viewmodelLib and Skins.Originals.ViewmodelNew then
+		viewmodelLib.new = Skins.Originals.ViewmodelNew
+	end
 	local camera = workspace.CurrentCamera
 	if camera and Fov.Original then camera.FieldOfView = Fov.Original end
 	for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
@@ -1356,5 +1321,5 @@ function gui:Unload()
 end
 env.KittenScript = gui
 
-switchTab("Skins")
+switchTab("Visuals")
 notify("KittenScript", "Загружено. RightShift — меню.")
