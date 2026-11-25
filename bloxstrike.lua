@@ -1,7 +1,4 @@
---[[  KittenScript for Blox Strike
-      SkinChanger / Camera FOV / Auto BunnyHop
-      Toggle menu: RightShift
-]]
+
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -18,19 +15,20 @@ if env.KittenScript and type(env.KittenScript.Unload) == "function" then
 end
 
 ---------------------------------------------------------------------------
--- Палитра
+-- Тема
 ---------------------------------------------------------------------------
 local C = {
-	Bg         = Color3.fromRGB(8, 8, 10),
-	Panel      = Color3.fromRGB(14, 14, 18),
-	Element    = Color3.fromRGB(20, 20, 26),
-	Hover      = Color3.fromRGB(28, 27, 37),
-	Stroke     = Color3.fromRGB(42, 35, 58),
-	Accent     = Color3.fromRGB(185, 154, 255),
-	AccentDeep = Color3.fromRGB(120, 84, 240),
-	Text       = Color3.fromRGB(234, 231, 244),
-	Dim        = Color3.fromRGB(138, 133, 156),
-	Off        = Color3.fromRGB(38, 37, 46),
+	BgTop      = Color3.fromRGB(42, 29, 62),
+	BgBottom   = Color3.fromRGB(24, 17, 36),
+	Panel      = Color3.fromRGB(47, 34, 68),
+	Element    = Color3.fromRGB(58, 42, 84),
+	Hover      = Color3.fromRGB(72, 53, 102),
+	Stroke     = Color3.fromRGB(84, 64, 118),
+	Accent     = Color3.fromRGB(214, 180, 254),
+	AccentDeep = Color3.fromRGB(168, 85, 247),
+	Text       = Color3.fromRGB(243, 236, 255),
+	Dim        = Color3.fromRGB(178, 162, 202),
+	Off        = Color3.fromRGB(74, 62, 96),
 }
 
 local Connections = {}
@@ -58,17 +56,39 @@ local function corner(obj, r)
 end
 
 local function stroke(obj, color, thickness, trans)
-	local s = create("UIStroke", {
+	return create("UIStroke", {
 		Color = color or C.Stroke,
 		Thickness = thickness or 1,
-		Transparency = trans or 0.35,
+		Transparency = trans or 0.4,
 		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 	}, obj)
-	return s
+end
+
+local function chevron(parent)
+	local holder = create("Frame", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -12, 0.5, 0),
+		Size = UDim2.fromOffset(11, 7),
+		BackgroundTransparency = 1,
+	}, parent)
+	create("Frame", {
+		Size = UDim2.fromOffset(6, 1.6),
+		Position = UDim2.fromOffset(0, 3),
+		Rotation = 40,
+		BackgroundColor3 = C.Accent,
+		BorderSizePixel = 0,
+	}, holder)
+	create("Frame", {
+		Size = UDim2.fromOffset(6, 1.6),
+		Position = UDim2.fromOffset(5, 3),
+		Rotation = -40,
+		BackgroundColor3 = C.Accent,
+		BorderSizePixel = 0,
+	}, holder)
 end
 
 ---------------------------------------------------------------------------
--- ScreenGui
+-- Root
 ---------------------------------------------------------------------------
 local gui = { Toggled = true }
 local screen = create("ScreenGui", {
@@ -82,51 +102,54 @@ local screen = create("ScreenGui", {
 ---------------------------------------------------------------------------
 -- Уведомления
 ---------------------------------------------------------------------------
-local function notify(title, text)
-	local holder = screen:FindFirstChild("KittenNotify")
-	if not holder then
-		holder = create("Frame", {
-			Name = "KittenNotify",
-			AnchorPoint = Vector2.new(1, 0),
-			Position = UDim2.new(1, -18, 0, 18),
-			Size = UDim2.fromOffset(260, 10),
-			BackgroundTransparency = 1,
-		}, screen)
-		create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, holder)
-	end
+local notifyHolder = create("Frame", {
+	Name = "KittenNotify",
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -18, 0, 18),
+	Size = UDim2.fromOffset(262, 10),
+	BackgroundTransparency = 1,
+}, screen)
+create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, notifyHolder)
+
+local function notify(titleText, body)
 	local card = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 54),
+		Size = UDim2.new(1, 0, 0, 56),
 		BackgroundColor3 = C.Panel,
-		BackgroundTransparency = 0.08,
-	}, holder)
+		BackgroundTransparency = 0.15,
+	}, notifyHolder)
 	corner(card, 10)
-	stroke(card, C.Accent, 1, 0.6)
-	create("Frame", { Size = UDim2.new(0, 3, 1, -14), Position = UDim2.fromOffset(0, 7), BackgroundColor3 = C.Accent, BorderSizePixel = 0 }, card)
-	local t = create("TextLabel", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(12, 7),
-		Size = UDim2.new(1, -20, 0, 16),
-		Font = Enum.Font.GothamBold,
-		TextSize = 13,
-		TextColor3 = C.Accent,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Text = title,
+	stroke(card, C.Accent, 1, 0.55)
+	create("Frame", {
+		Size = UDim2.new(0, 3, 1, -16),
+		Position = UDim2.fromOffset(0, 8),
+		BackgroundColor3 = C.Accent,
+		BorderSizePixel = 0,
 	}, card)
 	create("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(12, 25),
-		Size = UDim2.new(1, -20, 0, 22),
+		Position = UDim2.fromOffset(12, 8),
+		Size = UDim2.new(1, -22, 0, 16),
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = C.Accent,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = titleText,
+	}, card)
+	local bodyLabel = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(12, 26),
+		Size = UDim2.new(1, -22, 0, 24),
 		Font = Enum.Font.Gotham,
 		TextSize = 11,
 		TextColor3 = C.Dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextWrapped = true,
-		Text = text,
+		Text = body,
 	}, card)
 	task.delay(4, function()
 		pcall(function()
 			tween(card, 0.25, { BackgroundTransparency = 1 })
-			tween(t, 0.25, { TextTransparency = 1 })
+			tween(bodyLabel, 0.25, { TextTransparency = 1 })
 			task.wait(0.3)
 			card:Destroy()
 		end)
@@ -134,20 +157,20 @@ local function notify(title, text)
 end
 
 ---------------------------------------------------------------------------
--- Мини-кнопка (когда окно скрыто)
+-- Мини-кнопка
 ---------------------------------------------------------------------------
 local mini = create("TextButton", {
-	Name = "Mini",
-	Size = UDim2.fromOffset(120, 32),
+	Size = UDim2.fromOffset(122, 32),
 	Position = UDim2.new(0, 18, 0, 18),
 	BackgroundColor3 = C.Panel,
+	BackgroundTransparency = 0.1,
 	AutoButtonColor = false,
 	Text = "",
 	Visible = false,
 }, screen)
 corner(mini, 16)
 stroke(mini, C.Accent, 1, 0.5)
-local miniLabel = create("TextLabel", {
+create("TextLabel", {
 	Size = UDim2.fromScale(1, 1),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamBold,
@@ -155,30 +178,41 @@ local miniLabel = create("TextLabel", {
 	TextColor3 = C.Accent,
 	Text = "Kitten",
 }, mini)
-create("Frame", { Size = UDim2.new(0, 4, 1, -12), Position = UDim2.fromOffset(0, 6), BackgroundColor3 = C.Accent, BorderSizePixel = 0 }, mini)
+create("Frame", {
+	Size = UDim2.new(0, 4, 1, -12),
+	Position = UDim2.fromOffset(0, 6),
+	BackgroundColor3 = C.Accent,
+	BorderSizePixel = 0,
+}, mini)
 
 ---------------------------------------------------------------------------
--- Главное окно
+-- Окно
 ---------------------------------------------------------------------------
 local main = create("Frame", {
-	Name = "Main",
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.fromOffset(580, 400),
-	BackgroundColor3 = C.Bg,
+	Size = UDim2.fromOffset(600, 420),
+	BackgroundColor3 = C.BgTop,
 	BorderSizePixel = 0,
 	ClipsDescendants = true,
 }, screen)
 corner(main, 14)
-stroke(main, C.Stroke, 1, 0.25)
+stroke(main, C.Stroke, 1, 0.2)
+create("UIGradient", {
+	Rotation = 90,
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, C.BgTop),
+		ColorSequenceKeypoint.new(1, C.BgBottom),
+	}),
+}, main)
 
 local glow = create("Frame", {
 	Size = UDim2.new(1, 0, 0, 2),
 	BackgroundColor3 = C.Accent,
 	BorderSizePixel = 0,
-	BackgroundTransparency = 0.15,
+	BackgroundTransparency = 0.1,
 }, main)
-local glowGrad = create("UIGradient", {
+create("UIGradient", {
 	Color = ColorSequence.new({
 		ColorSequenceKeypoint.new(0, C.AccentDeep),
 		ColorSequenceKeypoint.new(0.5, C.Accent),
@@ -186,18 +220,17 @@ local glowGrad = create("UIGradient", {
 	}),
 }, glow)
 
--- Шапка
 local header = create("Frame", {
-	Size = UDim2.new(1, 0, 0, 46),
+	Size = UDim2.new(1, 0, 0, 58),
 	BackgroundTransparency = 1,
 }, main)
 
 local title = create("TextLabel", {
-	Position = UDim2.fromOffset(18, 0),
-	Size = UDim2.new(0, 220, 1, 0),
+	Position = UDim2.fromOffset(20, 10),
+	Size = UDim2.new(0, 260, 0, 24),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamBlack,
-	TextSize = 19,
+	TextSize = 18,
 	TextColor3 = C.Text,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Text = "KittenScript",
@@ -210,40 +243,31 @@ create("UIGradient", {
 }, title)
 
 create("TextLabel", {
-	Position = UDim2.fromOffset(18, 24),
-	Size = UDim2.new(0, 260, 0, 14),
+	Position = UDim2.fromOffset(21, 34),
+	Size = UDim2.new(0, 280, 0, 14),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
 	TextColor3 = C.Dim,
 	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = "blox strike  •  RightShift",
+	Text = "blox strike   ·   RightShift",
 }, header)
 
-local function headerButton(text, xOffset, fn)
-	local b = create("TextButton", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, xOffset, 0.5, 0),
-		Size = UDim2.fromOffset(26, 26),
-		BackgroundColor3 = C.Element,
-		AutoButtonColor = false,
-		Text = text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 14,
-		TextColor3 = C.Dim,
-	}, header)
-	corner(b, 7)
-	b.MouseEnter:Connect(function() tween(b, 0.15, { BackgroundColor3 = C.Hover, TextColor3 = C.Accent }) end)
-	b.MouseLeave:Connect(function() tween(b, 0.15, { BackgroundColor3 = C.Element, TextColor3 = C.Dim }) end)
-	b.MouseButton1Click:Connect(fn)
-	return b
-end
-
-headerButton("✕", -14, function()
-	gui.Toggled = false
-	main.Visible = false
-	mini.Visible = true
-end)
+local closeButton = create("TextButton", {
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -16, 0.5, 0),
+	Size = UDim2.fromOffset(28, 28),
+	BackgroundColor3 = C.Element,
+	BackgroundTransparency = 0.2,
+	AutoButtonColor = false,
+	Text = "",
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	TextColor3 = C.Dim,
+}, header)
+corner(closeButton, 8)
+create("Frame", { Size = UDim2.fromOffset(10, 1.6), Position = UDim2.fromOffset(9, 13), Rotation = 45, BackgroundColor3 = C.Dim, BorderSizePixel = 0 }, closeButton)
+create("Frame", { Size = UDim2.fromOffset(10, 1.6), Position = UDim2.fromOffset(9, 13), Rotation = -45, BackgroundColor3 = C.Dim, BorderSizePixel = 0 }, closeButton)
 
 -- Перетаскивание
 do
@@ -271,37 +295,48 @@ end
 
 -- Сайдбар
 local sidebar = create("Frame", {
-	Position = UDim2.fromOffset(14, 54),
-	Size = UDim2.new(0, 140, 1, -68),
+	Position = UDim2.fromOffset(16, 68),
+	Size = UDim2.new(0, 152, 1, -84),
 	BackgroundColor3 = C.Panel,
+	BackgroundTransparency = 0.15,
 	BorderSizePixel = 0,
 }, main)
 corner(sidebar, 10)
+create("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, sidebar)
+create("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, sidebar)
 
 local content = create("Frame", {
-	Position = UDim2.fromOffset(166, 54),
-	Size = UDim2.new(1, -180, 1, -68),
+	Position = UDim2.fromOffset(184, 68),
+	Size = UDim2.new(1, -200, 1, -84),
 	BackgroundTransparency = 1,
 	ClipsDescendants = true,
 }, main)
 
-local Tabs = {}
-local CurrentTab = nil
+local Tabs, TabOrder, CurrentTab = {}, {}, nil
+local openPopups = {}
+
+local function closeAllPopups()
+	for _, popup in ipairs(table.clone(openPopups)) do
+		pcall(function() popup:Destroy() end)
+	end
+	table.clear(openPopups)
+end
 
 local function switchTab(name)
 	if CurrentTab == name then return end
+	closeAllPopups()
 	CurrentTab = name
 	for tabName, data in pairs(Tabs) do
 		local active = tabName == name
 		tween(data.Button, 0.18, { BackgroundColor3 = active and C.Element or C.Panel })
 		tween(data.Bar, 0.18, { BackgroundTransparency = active and 0 or 1 })
-		tween(data.Button.TextLabel, 0.18, { TextColor3 = active and C.Accent or C.Dim })
+		tween(data.Label, 0.18, { TextColor3 = active and C.Accent or C.Dim })
 		if active then
 			data.Group.Visible = true
-			data.Group.Position = UDim2.fromOffset(14, 0)
+			data.Group.Position = UDim2.fromOffset(12, 0)
 			tween(data.Group, 0.22, { GroupTransparency = 0, Position = UDim2.fromOffset(0, 0) })
 		else
-			tween(data.Group, 0.16, { GroupTransparency = 1, Position = UDim2.fromOffset(active and 0 or 14, 0) })
+			tween(data.Group, 0.16, { GroupTransparency = 1, Position = UDim2.fromOffset(12, 0) })
 			task.delay(0.17, function()
 				if CurrentTab ~= tabName then data.Group.Visible = false end
 			end)
@@ -309,35 +344,33 @@ local function switchTab(name)
 	end
 end
 
-local function addTab(name, iconText)
+local function addTab(name)
 	local btn = create("TextButton", {
-		Size = UDim2.new(1, -16, 0, 34),
-		Position = UDim2.fromOffset(8, 8 + (#sidebar:GetChildren() - 1) * 0),
+		Size = UDim2.new(1, 0, 0, 36),
 		BackgroundColor3 = C.Panel,
 		AutoButtonColor = false,
-		Text = "   " .. name,
-		Font = Enum.Font.GothamMedium,
-		TextSize = 13,
-		TextColor3 = C.Dim,
-		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "",
 	}, sidebar)
-	btn.LayoutOrder = #sidebar:GetChildren()
+	btn.LayoutOrder = #TabOrder + 1
+	table.insert(TabOrder, btn)
+
 	local bar = create("Frame", {
-		Size = UDim2.new(0, 3, 1, -14),
-		Position = UDim2.fromOffset(0, 7),
+		Size = UDim2.new(0, 3, 1, -16),
+		Position = UDim2.fromOffset(0, 8),
 		BackgroundColor3 = C.Accent,
 		BorderSizePixel = 0,
 		BackgroundTransparency = 1,
 	}, btn)
 	corner(bar, 2)
-	create("TextLabel", {
-		Position = UDim2.fromOffset(10, 0),
-		Size = UDim2.fromOffset(16, 34),
+	local label = create("TextLabel", {
+		Position = UDim2.fromOffset(12, 0),
+		Size = UDim2.new(1, -20, 1, 0),
 		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
+		Font = Enum.Font.GothamMedium,
 		TextSize = 13,
-		TextColor3 = C.AccentDeep,
-		Text = iconText,
+		TextColor3 = C.Dim,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = name,
 	}, btn)
 
 	local group = create("CanvasGroup", {
@@ -354,9 +387,10 @@ local function addTab(name, iconText)
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ScrollBarThickness = 3,
 		ScrollBarImageColor3 = C.AccentDeep,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
 	}, group)
-	create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
-	create("UIPadding", { PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8) }, scroll)
+	create("UIListLayout", { Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
+	create("UIPadding", { PaddingRight = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14) }, scroll)
 
 	btn.MouseButton1Click:Connect(function() switchTab(name) end)
 	btn.MouseEnter:Connect(function()
@@ -366,23 +400,20 @@ local function addTab(name, iconText)
 		if CurrentTab ~= name then tween(btn, 0.15, { BackgroundColor3 = C.Panel }) end
 	end)
 
-	Tabs[name] = { Button = btn, Bar = bar, Group = group, Scroll = scroll }
+	Tabs[name] = { Button = btn, Bar = bar, Label = label, Group = group, Scroll = scroll }
 	return scroll
 end
 
-create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, sidebar)
-create("UIPadding", { PaddingTop = UDim.new(0, 8) }, sidebar)
-
-local skinPage = addTab("Skins", "✦")
-local visualPage = addTab("Visuals", "◈")
-local movePage = addTab("Movement", "⇅")
+local skinPage = addTab("Skins")
+local visualPage = addTab("Visuals")
+local movePage = addTab("Movement")
 
 ---------------------------------------------------------------------------
--- Элементы UI
+-- Элементы
 ---------------------------------------------------------------------------
 local function section(parent, text)
-	local l = create("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 18),
+	return create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 20),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		TextSize = 11,
@@ -390,13 +421,25 @@ local function section(parent, text)
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Text = string.upper(text),
 	}, parent)
-	return l
+end
+
+local function hint(parent, text)
+	return create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 16),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 11,
+		TextColor3 = C.Dim,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = text,
+	}, parent)
 end
 
 local function row(parent, height)
 	local r = create("Frame", {
 		Size = UDim2.new(1, 0, 0, height or 36),
 		BackgroundColor3 = C.Element,
+		BackgroundTransparency = 0.12,
 		BorderSizePixel = 0,
 	}, parent)
 	corner(r, 8)
@@ -407,7 +450,7 @@ local function makeToggle(parent, text, default, callback)
 	local r = row(parent, 36)
 	local label = create("TextLabel", {
 		Position = UDim2.fromOffset(12, 0),
-		Size = UDim2.new(1, -70, 1, 0),
+		Size = UDim2.new(1, -68, 1, 0),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 12,
@@ -425,9 +468,9 @@ local function makeToggle(parent, text, default, callback)
 	corner(pill, 10)
 	local knob = create("Frame", {
 		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 2, 0.5, 0),
+		Position = default and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
 		Size = UDim2.fromOffset(16, 16),
-		BackgroundColor3 = default and C.Accent or Color3.fromRGB(150, 148, 160),
+		BackgroundColor3 = default and C.Accent or Color3.fromRGB(196, 186, 212),
 		BorderSizePixel = 0,
 	}, pill)
 	corner(knob, 8)
@@ -437,16 +480,11 @@ local function makeToggle(parent, text, default, callback)
 		tween(pill, 0.16, { BackgroundColor3 = state and C.AccentDeep or C.Off })
 		tween(knob, 0.16, {
 			Position = state and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
-			BackgroundColor3 = state and C.Accent or Color3.fromRGB(150, 148, 160),
+			BackgroundColor3 = state and C.Accent or Color3.fromRGB(196, 186, 212),
 		})
-		tween(label, 0.16, { TextColor3 = state and C.Text or C.Dim })
 	end
 
-	local clickable = create("TextButton", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Text = "",
-	}, r)
+	local clickable = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "" }, r)
 	clickable.MouseButton1Click:Connect(function()
 		state = not state
 		paint()
@@ -456,9 +494,9 @@ local function makeToggle(parent, text, default, callback)
 end
 
 local function makeSlider(parent, text, min, max, default, suffix, callback)
-	local r = row(parent, 46)
+	local r = row(parent, 48)
 	create("TextLabel", {
-		Position = UDim2.fromOffset(12, 6),
+		Position = UDim2.fromOffset(12, 7),
 		Size = UDim2.new(1, -70, 0, 16),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
@@ -469,8 +507,8 @@ local function makeSlider(parent, text, min, max, default, suffix, callback)
 	}, r)
 	local valueLabel = create("TextLabel", {
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -12, 6, 0),
-		Size = UDim2.fromOffset(60, 16),
+		Position = UDim2.new(1, -12, 7, 0),
+		Size = UDim2.fromOffset(64, 16),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		TextSize = 12,
@@ -480,7 +518,7 @@ local function makeSlider(parent, text, min, max, default, suffix, callback)
 	}, r)
 
 	local track = create("Frame", {
-		Position = UDim2.fromOffset(12, 32),
+		Position = UDim2.fromOffset(12, 34),
 		Size = UDim2.new(1, -24, 0, 5),
 		BackgroundColor3 = C.Off,
 		BorderSizePixel = 0,
@@ -492,9 +530,7 @@ local function makeSlider(parent, text, min, max, default, suffix, callback)
 		BorderSizePixel = 0,
 	}, track)
 	corner(fill, 3)
-	create("UIGradient", {
-		Color = ColorSequence.new(C.AccentDeep, C.Accent),
-	}, fill)
+	create("UIGradient", { Color = ColorSequence.new(C.AccentDeep, C.Accent) }, fill)
 	local knob = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new((default - min) / (max - min), 0, 0.5, 0),
@@ -531,9 +567,7 @@ local function makeSlider(parent, text, min, max, default, suffix, callback)
 			update(input)
 		end
 	end)
-	bind(UserInputService.InputEnded, function()
-		dragging = false
-	end)
+	bind(UserInputService.InputEnded, function() dragging = false end)
 
 	return { Set = function(v) set(v) end, Get = function() return value end }
 end
@@ -542,6 +576,7 @@ local function makeButton(parent, text, callback)
 	local b = create("TextButton", {
 		Size = UDim2.new(1, 0, 0, 34),
 		BackgroundColor3 = C.Element,
+		BackgroundTransparency = 0.12,
 		AutoButtonColor = false,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 12,
@@ -555,13 +590,12 @@ local function makeButton(parent, text, callback)
 	return b
 end
 
--- Дропдаун с поиском (попап поверх окна)
-local openPopups = {}
+local dropdowns = {}
 local function makeDropdown(parent, text, options, default, searchable, callback)
 	local r = row(parent, 36)
 	local label = create("TextLabel", {
 		Position = UDim2.fromOffset(12, 0),
-		Size = UDim2.new(1, -44, 1, 0),
+		Size = UDim2.new(1, -40, 1, 0),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 12,
@@ -570,34 +604,25 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 		TextTruncate = Enum.TextTruncate.AtEnd,
 		Text = text,
 	}, r)
-	create("TextLabel", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.fromOffset(12, 12),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.GothamBold,
-		TextSize = 11,
-		TextColor3 = C.Accent,
-		Text = "▾",
-	}, r)
+	chevron(r)
 	local clickable = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "" }, r)
 
 	local value = default
-	local popup, list, search
-	local open = false
+	local popup, list, search, open = nil, nil, nil, false
 
 	local function close()
 		if not open then return end
 		open = false
-		for i, p in ipairs(openPopups) do if p == popup then table.remove(openPopups, i) break end end
+		for i, p in ipairs(openPopups) do
+			if p == popup then table.remove(openPopups, i) break end
+		end
 		local p = popup
 		popup = nil
-		tween(p, 0.14, { BackgroundTransparency = 1 })
-		task.wait(0.15)
-		p:Destroy()
+		pcall(function() p:Destroy() end)
 	end
 
 	local function build(filter)
+		if not list then return end
 		for _, child in ipairs(list:GetChildren()) do
 			if child:IsA("TextButton") then child:Destroy() end
 		end
@@ -608,12 +633,13 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 				local b = create("TextButton", {
 					Size = UDim2.new(1, 0, 0, 26),
 					BackgroundColor3 = option == value and C.Hover or C.Element,
+					BackgroundTransparency = 0.15,
 					AutoButtonColor = false,
 					Font = Enum.Font.Gotham,
 					TextSize = 11,
 					TextColor3 = option == value and C.Accent or C.Text,
 					TextXAlignment = Enum.TextXAlignment.Left,
-					Text = "  " .. option,
+					Text = "   " .. option,
 				}, list)
 				b.MouseEnter:Connect(function() tween(b, 0.1, { BackgroundColor3 = C.Hover }) end)
 				b.MouseLeave:Connect(function()
@@ -627,32 +653,31 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 				end)
 			end
 		end
-		list.CanvasSize = UDim2.new(0, 0, 0, count * 26 + 4)
+		list.CanvasSize = UDim2.new(0, 0, 0, count * 28 + 6)
 	end
 
 	clickable.MouseButton1Click:Connect(function()
 		if open then close() return end
-		for _, p in ipairs(table.clone(openPopups)) do
-			-- закрыть другие
-		end
+		closeAllPopups()
 		open = true
 		local pos = r.AbsolutePosition - main.AbsolutePosition
+		local width = math.max(180, r.AbsoluteSize.X)
+		local x = math.clamp(pos.X, 8, math.max(8, main.AbsoluteSize.X - width - 8))
 		popup = create("Frame", {
-			Position = UDim2.fromOffset(pos.X, pos.Y + r.AbsoluteSize.Y + 4),
-			Size = UDim2.fromOffset(r.AbsoluteSize.X, searchable and 190 or 170),
+			Position = UDim2.fromOffset(x, pos.Y + r.AbsoluteSize.Y + 4),
+			Size = UDim2.fromOffset(width, searchable and 200 or 180),
 			BackgroundColor3 = C.Panel,
-			BackgroundTransparency = 1,
+			BackgroundTransparency = 0.05,
 			ZIndex = 60,
 		}, main)
 		corner(popup, 8)
-		stroke(popup, C.Stroke, 1, 0.3)
-		tween(popup, 0.15, { BackgroundTransparency = 0 })
+		stroke(popup, C.Stroke, 1, 0.25)
 		table.insert(openPopups, popup)
 
 		if searchable then
 			search = create("TextBox", {
 				Position = UDim2.fromOffset(6, 6),
-				Size = UDim2.new(1, -12, 0, 24),
+				Size = UDim2.new(1, -12, 0, 26),
 				BackgroundColor3 = C.Element,
 				Font = Enum.Font.Gotham,
 				TextSize = 11,
@@ -668,8 +693,8 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 		end
 
 		list = create("ScrollingFrame", {
-			Position = UDim2.fromOffset(6, searchable and 34 or 6),
-			Size = UDim2.new(1, -12, 1, searchable and -40 or -12),
+			Position = UDim2.fromOffset(6, searchable and 36 or 6),
+			Size = UDim2.new(1, -12, 1, searchable and -42 or -12),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			CanvasSize = UDim2.new(),
@@ -681,29 +706,30 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 		build("")
 	end)
 
-	return {
+	local api = {
 		Set = function(v) value = v label.Text = v end,
 		Get = function() return value end,
-		SetOptions = function(list2)
-			options = list2
+		SetOptions = function(newOptions)
+			options = newOptions
 			if open then build(search and search.Text or "") end
 		end,
 		Close = close,
 	}
+	table.insert(dropdowns, api)
+	return api
 end
 
 ---------------------------------------------------------------------------
--- SkinChanger
+-- Скины: общий слой
 ---------------------------------------------------------------------------
-local Skins = nil
-local skinLoadout = {}
+local Skins = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("Skins")
+local WeaponsAssets = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("Weapons")
 local skinRecords = setmetatable({}, { __mode = "k" })
-local skinEnabled = false
 
 local IGNORE = {
 	["HE Grenade"] = true, ["Incendiary Grenade"] = true, ["Molotov"] = true,
 	["Smoke Grenade"] = true, ["Flashbang"] = true, ["Decoy Grenade"] = true,
-	["C4"] = true, ["CT Glove"] = true, ["T Glove"] = true,
+	["C4"] = true, ["CT Glove"] = true, ["T Glove"] = true, ["Sports Gloves"] = true,
 }
 
 local function restorePart(part)
@@ -720,47 +746,20 @@ local function restoreAllSkins()
 	for part in pairs(skinRecords) do restorePart(part) end
 end
 
-local function applyGloves(model)
-	local gloveFolder = Skins and Skins:FindFirstChild("Sports Gloves")
-	local selection = skinLoadout["Sports Gloves"]
-	if not gloveFolder or not selection then return end
-	local skin = gloveFolder:FindFirstChild(selection.Skin)
-	local cameraFolder = skin and skin:FindFirstChild("Camera")
-	local source = cameraFolder and cameraFolder:FindFirstChild(selection.Wear)
-	if not source then return end
-	for _, side in ipairs({ "Left Arm", "Right Arm" }) do
-		local arm = model:FindFirstChild(side)
-		local glove = arm and arm:FindFirstChild("Glove")
-		local paint = source:FindFirstChild(side)
-		local surface = paint and paint:FindFirstChildOfClass("SurfaceAppearance")
-		if glove and surface then
-			local key = "glove:" .. selection.Skin .. ":" .. selection.Wear
-			local rec = skinRecords[glove]
-			if rec and rec.Key == key then continue end
-			restorePart(glove)
-			local originals = {}
-			for _, child in ipairs(glove:GetChildren()) do
-				if child:IsA("SurfaceAppearance") then table.insert(originals, child) child.Parent = nil end
-			end
-			local clone = surface:Clone()
-			clone.Parent = glove
-			skinRecords[glove] = { Key = key, Originals = originals, Applied = clone }
-		end
-	end
+local function skinSource(weapon, skinName, wear)
+	if not Skins then return nil end
+	local weaponFolder = Skins:FindFirstChild(weapon)
+	local skinFolder = weaponFolder and weaponFolder:FindFirstChild(skinName)
+	local cameraFolder = skinFolder and skinFolder:FindFirstChild("Camera")
+	return cameraFolder and cameraFolder:FindFirstChild(wear or "Factory New")
 end
 
-local function applyWeaponSkin(model)
-	local weapon = model.Name
-	local selection = skinLoadout[weapon]
-	local weaponFolder = model:FindFirstChild("Weapon")
-	if not selection or not weaponFolder or not Skins then return end
-	local skinFolder = Skins:FindFirstChild(weapon)
-	local skin = skinFolder and skinFolder:FindFirstChild(selection.Skin)
-	local cameraFolder = skin and skin:FindFirstChild("Camera")
-	local source = cameraFolder and cameraFolder:FindFirstChild(selection.Wear)
+local function applySkinToModel(model, weapon, skinName, wear)
+	local source = skinSource(weapon, skinName, wear)
 	if not source then return end
-	local key = weapon .. ":" .. selection.Skin .. ":" .. selection.Wear
-	for _, part in ipairs(weaponFolder:GetDescendants()) do
+	local target = model:FindFirstChild("Weapon") or model
+	local key = weapon .. "|" .. skinName .. "|" .. tostring(wear)
+	for _, part in ipairs(target:GetDescendants()) do
 		if part:IsA("BasePart") then
 			local paint = source:FindFirstChild(part.Name)
 			local surface = paint and paint:FindFirstChildOfClass("SurfaceAppearance")
@@ -770,7 +769,10 @@ local function applyWeaponSkin(model)
 					restorePart(part)
 					local originals = {}
 					for _, child in ipairs(part:GetChildren()) do
-						if child:IsA("SurfaceAppearance") then table.insert(originals, child) child.Parent = nil end
+						if child:IsA("SurfaceAppearance") then
+							table.insert(originals, child)
+							child.Parent = nil
+						end
 					end
 					local clone = surface:Clone()
 					clone.Parent = part
@@ -781,68 +783,293 @@ local function applyWeaponSkin(model)
 	end
 end
 
-local function refreshSkins()
-	if not skinEnabled then return end
-	local camera = workspace.CurrentCamera
-	if not camera then return end
-	local alive = LocalPlayer.Character ~= nil
-	if not alive then restoreAllSkins() return end
-	for _, model in ipairs(camera:GetChildren()) do
-		if model:IsA("Model") then
-			if skinLoadout[model.Name] then
-				pcall(applyWeaponSkin, model)
-			elseif model:FindFirstChild("Left Arm") then
-				pcall(applyGloves, model)
+local function applyGloves(model, skinName, wear)
+	local source = skinSource("Sports Gloves", skinName, wear)
+	if not source then return end
+	for _, side in ipairs({ "Left Arm", "Right Arm" }) do
+		local arm = model:FindFirstChild(side)
+		local glove = arm and arm:FindFirstChild("Glove")
+		local paint = source:FindFirstChild(side)
+		local surface = paint and paint:FindFirstChildOfClass("SurfaceAppearance")
+		if glove and surface then
+			local key = "glove|" .. skinName .. "|" .. tostring(wear)
+			local rec = skinRecords[glove]
+			if not (rec and rec.Key == key) then
+				restorePart(glove)
+				local originals = {}
+				for _, child in ipairs(glove:GetChildren()) do
+					if child:IsA("SurfaceAppearance") then
+						table.insert(originals, child)
+						child.Parent = nil
+					end
+				end
+				local clone = surface:Clone()
+				clone.Parent = glove
+				skinRecords[glove] = { Key = key, Originals = originals, Applied = clone }
 			end
 		end
 	end
 end
 
-local function buildSkinLists()
-	Skins = ReplicatedStorage:FindFirstChild("Assets") and ReplicatedStorage.Assets:FindFirstChild("Skins")
-	if not Skins then return nil, nil, nil end
-	local knives, weapons = {}, {}
-	for _, folder in ipairs(Skins:GetChildren()) do
-		if folder:IsA("Folder") and not IGNORE[folder.Name] and folder.Name ~= "Sports Gloves" then
-			local sample = folder:GetChildren()[1]
-			if sample and sample:FindFirstChild("Camera") then
-				local name = folder.Name
-				if string.find(name, "Knife") or string.find(name, "Karambit")
-					or string.find(name, "Bayonet") or name == "Flip" or string.find(name, "Gut") then
-					table.insert(knives, name)
-				else
-					table.insert(weapons, name)
-				end
-			end
+local wearList = { "Factory New", "Minimal Wear", "Field-Tested", "Well-Worn", "Battle-Scarred" }
+
+---------------------------------------------------------------------------
+-- Кастомный нож
+---------------------------------------------------------------------------
+local Knife = {
+	Enabled = false,
+	Model = "Butterfly Knife",
+	Skin = nil,
+	Wear = "Factory New",
+	VM = nil,
+	Animator = nil,
+	Equip = nil, Idle = nil, Inspect = nil,
+	Swing1 = nil, Swing2 = nil, Heavy = nil,
+	Inspecting = false, Swinging = false, LastAttack = 0,
+}
+
+local KnifeOffsets = {
+	["Karambit"]       = CFrame.new(0, -1.5, 1.5),
+	["Butterfly Knife"] = CFrame.new(0, -1.5, 1.5),
+	["M9 Bayonet"]     = CFrame.new(0, -1.5, 1),
+	["Flip Knife"]     = CFrame.new(0, -1.5, 1.25),
+	["Gut Knife"]      = CFrame.new(0, -1.5, 0.5),
+}
+
+local ACTION_INSPECT = "KittenInspectKnife"
+local ACTION_ATTACK = "KittenAttackKnife"
+
+local function isAlive()
+	local chars = workspace:FindFirstChild("Characters")
+	local t = chars and chars:FindFirstChild("Terrorists")
+	local ct = chars and chars:FindFirstChild("Counter-Terrorists")
+	return (t and t:FindFirstChild(LocalPlayer.Name)) or (ct and ct:FindFirstChild(LocalPlayer.Name))
+end
+
+local function currentKnifeModel()
+	local camera = workspace.CurrentCamera
+	return camera and (camera:FindFirstChild("T Knife") or camera:FindFirstChild("CT Knife"))
+end
+
+local function cleanPart(part)
+	if not part:IsA("BasePart") then return end
+	part.CanCollide = false
+	part.Anchored = false
+	part.CastShadow = false
+	part.CanTouch = false
+	part.CanQuery = false
+end
+
+local function playSound(folder, name)
+	local sounds = ReplicatedStorage:FindFirstChild("Sounds")
+	local set = sounds and sounds:FindFirstChild(Knife.Model)
+	if not set then return end
+	pcall(function()
+		local sound = set:FindFirstChild(folder):FindFirstChild(name):Clone()
+		sound.Parent = workspace.CurrentCamera
+		sound:Play()
+		sound.Ended:Once(function() sound:Destroy() end)
+	end)
+end
+
+local function attachAsset(folder, armName, assetName, finalName, offset)
+	local vm = Knife.VM
+	if not vm or not folder then return end
+	local arm = vm:FindFirstChild(armName)
+	local asset = folder:FindFirstChild(assetName)
+	if not arm or not asset then return end
+	local mesh = asset:Clone()
+	cleanPart(mesh)
+	mesh.Name = finalName
+	mesh.Parent = arm
+	local motor = create("Motor6D", { Part0 = arm, Part1 = mesh, C0 = offset }, arm)
+	motor.Name = finalName .. "Joint"
+end
+
+local function handleKnifeAction(action, state)
+	if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+	if not Knife.VM or not Knife.Animator or not isAlive() then return Enum.ContextActionResult.Pass end
+
+	if action == ACTION_INSPECT then
+		if Knife.Inspecting or Knife.Swinging or (Knife.Equip and Knife.Equip.IsPlaying) then
+			return Enum.ContextActionResult.Pass
+		end
+		Knife.Inspecting = true
+		if Knife.Idle then Knife.Idle:Stop() end
+		if Knife.Inspect then
+			Knife.Inspect:Play()
+			Knife.Inspect.Stopped:Once(function() Knife.Inspecting = false end)
+		end
+	elseif action == ACTION_ATTACK then
+		local now = os.clock()
+		if (Knife.Equip and Knife.Equip.IsPlaying) or (now - Knife.LastAttack < 0.55) then
+			return Enum.ContextActionResult.Pass
+		end
+		Knife.LastAttack = now
+		Knife.Inspecting = false
+		if Knife.Inspect then Knife.Inspect:Stop() end
+		Knife.Swinging = true
+		if Knife.Idle then Knife.Idle:Stop() end
+		local pool = { Knife.Heavy, Knife.Swing1, Knife.Swing2 }
+		local chosen = pool[math.random(1, #pool)]
+		if chosen then
+			chosen:Play()
+			chosen.Stopped:Once(function() Knife.Swinging = false end)
+		else
+			Knife.Swinging = false
+		end
+		playSound("HitOne", "1")
+	end
+	return Enum.ContextActionResult.Pass
+end
+
+local function removeKnife()
+	local camera = workspace.CurrentCamera
+	if Knife.VM then
+		pcall(function() Knife.VM:Destroy() end)
+	end
+	Knife.VM, Knife.Animator = nil, nil
+	Knife.Equip, Knife.Idle, Knife.Inspect = nil, nil, nil
+	Knife.Swing1, Knife.Swing2, Knife.Heavy = nil, nil, nil
+	Knife.Inspecting, Knife.Swinging = false, false
+	pcall(function()
+		game:GetService("ContextActionService"):UnbindAction(ACTION_INSPECT)
+		game:GetService("ContextActionService"):UnbindAction(ACTION_ATTACK)
+	end)
+	if camera then
+		for _, child in ipairs(camera:GetChildren()) do
+			if child.Name == "KittenKnife" then child:Destroy() end
 		end
 	end
-	table.sort(knives)
-	table.sort(weapons)
-	local all = {}
-	for _, n in ipairs(knives) do table.insert(all, n) end
-	for _, n in ipairs(weapons) do table.insert(all, n) end
-	return all, knives, weapons
 end
+
+local function spawnKnife()
+	if Knife.VM or not Knife.Enabled then return end
+	local camera = workspace.CurrentCamera
+	if not camera or not isAlive() or not WeaponsAssets then return end
+	local template = WeaponsAssets:FindFirstChild(Knife.Model)
+	local cameraTemplate = template and template:FindFirstChild("Camera")
+	if not cameraTemplate then
+		notify("Нож", "Модель " .. Knife.Model .. " не найдена")
+		return
+	end
+
+	local model = cameraTemplate:Clone()
+	model.Name = "KittenKnife"
+	Knife.VM = model
+	for _, part in ipairs(model:GetDescendants()) do cleanPart(part) end
+	model.Parent = camera
+
+	local original = currentKnifeModel()
+	if original then
+		for _, part in ipairs(original:GetDescendants()) do
+			if part:IsA("BasePart") then part.Transparency = 1 end
+		end
+	end
+
+	local character = isAlive()
+	local isT = character and character.Parent and character.Parent.Name == "Terrorists"
+	if isT then
+		local gloves = WeaponsAssets:FindFirstChild("T Glove")
+		attachAsset(gloves, "Left Arm", "Left Arm", "Glove", CFrame.new(0, 0, -1.5))
+		attachAsset(gloves, "Right Arm", "Right Arm", "Glove", CFrame.new(0, 0, -1.5))
+	else
+		local sleeves = ReplicatedStorage.Assets:FindFirstChild("Sleeves")
+		local gloves = WeaponsAssets:FindFirstChild("CT Glove")
+		local sleeveFolder = sleeves and sleeves:FindFirstChild("IDF")
+		for _, side in ipairs({ "Left Arm", "Right Arm" }) do
+			attachAsset(sleeveFolder, side, side, "Sleeve", CFrame.new(0, 0, 0.5))
+			attachAsset(gloves, side, side, "Glove", CFrame.new(0, 0, -1.5))
+		end
+	end
+
+	local controller = model:FindFirstChildOfClass("AnimationController") or model:FindFirstChildOfClass("Animator")
+	Knife.Animator = controller and (controller:FindFirstChildWhichIsA("Animator") or controller)
+
+	local animFolder = ReplicatedStorage.Assets:FindFirstChild("WeaponAnimations")
+	animFolder = animFolder and animFolder:FindFirstChild(Knife.Model)
+	animFolder = animFolder and animFolder:FindFirstChild("CameraAnimations")
+
+	if Knife.Animator and animFolder then
+		local function load(name)
+			local asset = animFolder:FindFirstChild(name)
+			return asset and Knife.Animator:LoadAnimation(asset)
+		end
+		Knife.Equip = load("Equip")
+		Knife.Idle = load("Idle")
+		Knife.Inspect = load("Inspect")
+		Knife.Heavy = load("Heavy Swing")
+		Knife.Swing1 = load("Swing1")
+		Knife.Swing2 = load("Swing2")
+	end
+
+	local offset = KnifeOffsets[Knife.Model] or CFrame.new(0, -1.5, 1.5)
+	if model.PrimaryPart then
+		model:SetPrimaryPartCFrame(camera.CFrame * CFrame.new(0, -1.5, 5))
+		tween(model.PrimaryPart, 0.22, { CFrame = camera.CFrame * offset })
+	end
+	if Knife.Equip then Knife.Equip:Play() end
+	playSound("Equip", "1")
+
+	local cas = game:GetService("ContextActionService")
+	cas:BindAction(ACTION_INSPECT, handleKnifeAction, false, Enum.KeyCode.F)
+	cas:BindAction(ACTION_ATTACK, handleKnifeAction, false, Enum.UserInputType.MouseButton1)
+
+	Knife.Skin = Knife.Skin
+	if Knife.Skin then
+		pcall(applySkinToModel, model, Knife.Model, Knife.Skin, Knife.Wear)
+	end
+end
+
+-- Позиция вьюмодели каждый кадр
+bind(RunService.RenderStepped, function()
+	local vm = Knife.VM
+	local camera = workspace.CurrentCamera
+	if not vm or not camera or not vm.PrimaryPart then return end
+	vm.PrimaryPart.CFrame = camera.CFrame * (KnifeOffsets[Knife.Model] or CFrame.new(0, -1.5, 1.5))
+	if not (Knife.Equip and Knife.Equip.IsPlaying) and not Knife.Inspecting and not Knife.Swinging then
+		if Knife.Idle and not Knife.Idle.IsPlaying then Knife.Idle:Play() end
+	end
+end)
+
+-- Слежение за спавном/деспавном
+task.spawn(function()
+	while screen.Parent do
+		task.wait(0.15)
+		local alive = isAlive() ~= nil
+		local hasKnife = currentKnifeModel() ~= nil
+		if Knife.Enabled and alive and hasKnife and not Knife.VM then
+			pcall(spawnKnife)
+		elseif (not Knife.Enabled or not alive or not hasKnife) and Knife.VM then
+			pcall(removeKnife)
+		end
+	end
+end)
 
 ---------------------------------------------------------------------------
 -- Вкладка Skins
 ---------------------------------------------------------------------------
 do
-	section(skinPage, "Скинчейнджер")
-	makeToggle(skinPage, "Включить скинчейнджер", false, function(v)
-		skinEnabled = v
-		if not v then restoreAllSkins() end
+	section(skinPage, "Кастомный нож")
+	makeToggle(skinPage, "Применить кастомный нож", false, function(v)
+		Knife.Enabled = v
+		if not v then pcall(removeKnife) end
 	end)
 
-	local wearList = { "Factory New", "Minimal Wear", "Field-Tested", "Well-Worn", "Battle-Scarred" }
-	local weaponList, _, _ = buildSkinLists()
-	weaponList = weaponList or {}
+	local knifeModels = {}
+	if WeaponsAssets then
+		for _, folder in ipairs(WeaponsAssets:GetChildren()) do
+			if folder:IsA("Folder") and KnifeOffsets[folder.Name] and folder:FindFirstChild("Camera") then
+				table.insert(knifeModels, folder.Name)
+			end
+		end
+	end
+	table.sort(knifeModels)
 
-	local weaponDropdown, skinDropdown, wearDropdown
-
-	section(skinPage, "Оружие")
-	weaponDropdown = makeDropdown(skinPage, "Выберите оружие", weaponList, weaponList[1] or "AK-47", true, function(weapon)
-		local folder = Skins and Skins:FindFirstChild(weapon)
+	makeDropdown(skinPage, "Модель ножа", knifeModels, knifeModels[1] or "Butterfly Knife", false, function(name)
+		Knife.Model = name
+		Knife.Skin = nil
+		local folder = Skins and Skins:FindFirstChild(name)
 		local list = {}
 		if folder then
 			for _, skin in ipairs(folder:GetChildren()) do
@@ -850,69 +1077,107 @@ do
 			end
 		end
 		table.sort(list)
-		skinDropdown:SetOptions(list)
-		skinDropdown:Set(list[1] or "Original")
-		skinLoadout[weapon] = { Skin = list[1], Wear = "Factory New" }
-		restoreAllSkins()
-		refreshSkins()
+		knifeSkinDropdown:SetOptions(list)
+		knifeSkinDropdown:Set(list[1] or "—")
+		Knife.Skin = list[1]
+		if Knife.VM then
+			pcall(removeKnife)
+			pcall(spawnKnife)
+		end
 	end)
 
-	skinDropdown = makeDropdown(skinPage, "Скин", {}, "—", true, function(skin)
-		local weapon = weaponDropdown:Get()
-		if not weapon then return end
-		skinLoadout[weapon] = { Skin = skin, Wear = wearDropdown:Get() }
-		restoreAllSkins()
-		refreshSkins()
-	end)
-
-	wearDropdown = makeDropdown(skinPage, "Износ", wearList, "Factory New", false, function(wear)
-		local weapon = weaponDropdown:Get()
-		if not weapon then return end
-		local current = skinLoadout[weapon]
-		if current then
-			current.Wear = wear
+	knifeSkinDropdown = makeDropdown(skinPage, "Скин ножа", {}, "—", true, function(skin)
+		Knife.Skin = skin
+		if Knife.VM then
 			restoreAllSkins()
-			refreshSkins()
+			pcall(applySkinToModel, Knife.VM, Knife.Model, skin, Knife.Wear)
+		end
+	end)
+	makeDropdown(skinPage, "Износ", wearList, "Factory New", false, function(wear)
+		Knife.Wear = wear
+		if Knife.VM and Knife.Skin then
+			restoreAllSkins()
+			pcall(applySkinToModel, Knife.VM, Knife.Model, Knife.Skin, Knife.Wear)
 		end
 	end)
 
 	section(skinPage, "Перчатки")
 	local gloveFolder = Skins and Skins:FindFirstChild("Sports Gloves")
+	local gloveList = {}
 	if gloveFolder then
-		local gloveList = {}
 		for _, skin in ipairs(gloveFolder:GetChildren()) do
 			if skin:IsA("Folder") then table.insert(gloveList, skin.Name) end
 		end
-		table.sort(gloveList)
-		makeDropdown(skinPage, "Перчатки", gloveList, gloveList[1] or "—", true, function(skin)
-			skinLoadout["Sports Gloves"] = { Skin = skin, Wear = "Factory New" }
-			restoreAllSkins()
-			refreshSkins()
-		end)
-	else
-		create("TextLabel", {
-			Size = UDim2.new(1, 0, 0, 16),
-			BackgroundTransparency = 1,
-			Font = Enum.Font.Gotham,
-			TextSize = 11,
-			TextColor3 = C.Dim,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Text = "Перчатки не найдены в этой версии игры.",
-		}, skinPage)
 	end
-
-	section(skinPage, "Управление")
-	makeButton(skinPage, "Сбросить все скины", function()
-		table.clear(skinLoadout)
-		restoreAllSkins()
-		refreshSkins()
-		notify("KittenScript", "Все скины сброшены")
+	table.sort(gloveList)
+	local gloveSkin, gloveWear = gloveList[1], "Factory New"
+	makeDropdown(skinPage, "Скин перчаток", gloveList, gloveList[1] or "—", true, function(skin)
+		gloveSkin = skin
+		if Knife.VM then
+			restoreAllSkins()
+			pcall(applyGloves, Knife.VM, gloveSkin, gloveWear)
+		end
 	end)
-	makeButton(skinPage, "Взять текущее оружие", function()
+
+	section(skinPage, "Оружие")
+	local weaponList = {}
+	if Skins then
+		for _, folder in ipairs(Skins:GetChildren()) do
+			if folder:IsA("Folder") and not IGNORE[folder.Name] and not KnifeOffsets[folder.Name] then
+				local sample = folder:GetChildren()[1]
+				if sample and sample:FindFirstChild("Camera") then table.insert(weaponList, folder.Name) end
+			end
+		end
+	end
+	table.sort(weaponList)
+
+	local weaponLoadout = {}
+	local weaponSkin, weaponWear = nil, "Factory New"
+
+	local weaponDropdown = makeDropdown(skinPage, "Оружие", weaponList, weaponList[1] or "—", true, function(name)
+		local folder = Skins and Skins:FindFirstChild(name)
+		local list = {}
+		if folder then
+			for _, skin in ipairs(folder:GetChildren()) do
+				if skin:IsA("Folder") and skin:FindFirstChild("Camera") then table.insert(list, skin.Name) end
+			end
+		end
+		table.sort(list)
+		weaponSkinDropdown:SetOptions(list)
+		weaponSkinDropdown:Set(list[1] or "—")
+		weaponSkin = list[1]
+		weaponLoadout[name] = { Skin = weaponSkin, Wear = weaponWear }
+		restoreAllSkins()
+		applyWeapons()
+	end)
+
+	local weaponSkinDropdown = makeDropdown(skinPage, "Скин оружия", {}, "—", true, function(skin)
+		weaponSkin = skin
+		local name = weaponDropdown:Get()
+		if name then
+			weaponLoadout[name] = { Skin = skin, Wear = weaponWear }
+			restoreAllSkins()
+			applyWeapons()
+		end
+	end)
+
+	function applyWeapons()
 		local camera = workspace.CurrentCamera
 		if not camera then return end
 		for _, model in ipairs(camera:GetChildren()) do
-			if model:IsA("Model") and skinLoadout[model.Name] == nil and model:FindFirstChild("Weapon") then
+			if model:IsA("Model") and weaponLoadout[model.Name] and model ~= Knife.VM then
+				local sel = weaponLoadout[model.Name]
+				pcall(applySkinToModel, model, model.Name, sel.Skin, sel.Wear)
+			end
+		end
+	end
+
+	section(skinPage, "Управление")
+	makeButton(skinPage, "Взять оружие в руках", function()
+		local camera = workspace.CurrentCamera
+		if not camera then return end
+		for _, model in ipairs(camera:GetChildren()) do
+			if model:IsA("Model") and model:FindFirstChild("Weapon") and not KnifeOffsets[model.Name] and model ~= Knife.VM then
 				weaponDropdown:Set(model.Name)
 				local folder = Skins and Skins:FindFirstChild(model.Name)
 				if folder then
@@ -921,40 +1186,89 @@ do
 						if skin:IsA("Folder") then table.insert(list, skin.Name) end
 					end
 					table.sort(list)
-					skinDropdown:SetOptions(list)
-					skinDropdown:Set(list[1] or "—")
+					weaponSkinDropdown:SetOptions(list)
+					weaponSkinDropdown:Set(list[1] or "—")
+					weaponSkin = list[1]
+					weaponLoadout[model.Name] = { Skin = weaponSkin, Wear = weaponWear }
+					restoreAllSkins()
+					applyWeapons()
 				end
 				return
 			end
 		end
 	end)
-
-	task.spawn(function()
-		while screen.Parent do
-			task.wait(0.4)
-			if skinEnabled then pcall(refreshSkins) end
+	makeButton(skinPage, "Сбросить все скины", function()
+		table.clear(weaponLoadout)
+		restoreAllSkins()
+		if Knife.VM and Knife.Skin then
+			pcall(applySkinToModel, Knife.VM, Knife.Model, Knife.Skin, Knife.Wear)
 		end
+		notify("KittenScript", "Скины сброшены")
+	end)
+
+	-- переприменение оружия на новые вьюмодели
+	bind(workspace:GetPropertyChangedSignal("CurrentCamera"), function()
+		local camera = workspace.CurrentCamera
+		if not camera then return end
+		bind(camera.ChildAdded, function(model)
+			if not model:IsA("Model") then return end
+			task.wait(0.12)
+			if model == Knife.VM then
+				if Knife.Skin then pcall(applySkinToModel, model, Knife.Model, Knife.Skin, Knife.Wear) end
+				if gloveSkin then pcall(applyGloves, model, gloveSkin, gloveWear) end
+			elseif weaponLoadout[model.Name] then
+				local sel = weaponLoadout[model.Name]
+				pcall(applySkinToModel, model, model.Name, sel.Skin, sel.Wear)
+			end
+		end)
 	end)
 	if workspace.CurrentCamera then
 		bind(workspace.CurrentCamera.ChildAdded, function(model)
-			if skinEnabled and model:IsA("Model") then
-				task.wait(0.1)
-				pcall(refreshSkins)
+			if not model:IsA("Model") then return end
+			task.wait(0.12)
+			if model == Knife.VM then
+				if Knife.Skin then pcall(applySkinToModel, model, Knife.Model, Knife.Skin, Knife.Wear) end
+				if gloveSkin then pcall(applyGloves, model, gloveSkin, gloveWear) end
+			elseif weaponLoadout[model.Name] then
+				local sel = weaponLoadout[model.Name]
+				pcall(applySkinToModel, model, model.Name, sel.Skin, sel.Wear)
 			end
 		end)
 	end
-	bind(workspace:GetPropertyChangedSignal("CurrentCamera"), function()
-		local cam = workspace.CurrentCamera
-		if cam then
-			bind(cam.ChildAdded, function()
-				if skinEnabled then task.wait(0.1) pcall(refreshSkins) end
-			end)
+
+	-- инициализация первого оружия
+	if weaponList[1] then
+		local folder = Skins and Skins:FindFirstChild(weaponList[1])
+		local list = {}
+		if folder then
+			for _, skin in ipairs(folder:GetChildren()) do
+				if skin:IsA("Folder") then table.insert(list, skin.Name) end
+			end
 		end
-	end)
+		table.sort(list)
+		weaponSkinDropdown:SetOptions(list)
+		weaponSkinDropdown:Set(list[1] or "—")
+		weaponSkin = list[1]
+		weaponLoadout[weaponList[1]] = { Skin = weaponSkin, Wear = weaponWear }
+	end
+	if knifeModels[1] then
+		Knife.Model = knifeModels[1]
+		local folder = Skins and Skins:FindFirstChild(knifeModels[1])
+		local list = {}
+		if folder then
+			for _, skin in ipairs(folder:GetChildren()) do
+				if skin:IsA("Folder") then table.insert(list, skin.Name) end
+			end
+		end
+		table.sort(list)
+		knifeSkinDropdown:SetOptions(list)
+		knifeSkinDropdown:Set(list[1] or "—")
+		Knife.Skin = list[1]
+	end
 end
 
 ---------------------------------------------------------------------------
--- Вкладка Visuals (FOV)
+-- Вкладка Visuals
 ---------------------------------------------------------------------------
 local Fov = { Enabled = false, Value = 90, Original = nil, Circle = false, CircleSize = 120 }
 local fovCircle = nil
@@ -963,11 +1277,11 @@ do
 	section(visualPage, "Камера")
 	makeToggle(visualPage, "Включить FOV", false, function(v)
 		Fov.Enabled = v
-		local cam = workspace.CurrentCamera
-		if v and cam then
-			Fov.Original = cam.FieldOfView
-		elseif cam and Fov.Original then
-			cam.FieldOfView = Fov.Original
+		local camera = workspace.CurrentCamera
+		if v and camera then
+			Fov.Original = camera.FieldOfView
+		elseif camera and Fov.Original then
+			camera.FieldOfView = Fov.Original
 		end
 	end)
 	makeSlider(visualPage, "Значение FOV", 60, 130, 90, "", function(v) Fov.Value = v end)
@@ -983,9 +1297,9 @@ do
 	makeSlider(visualPage, "Радиус круга", 40, 400, 120, " px", function(v) Fov.CircleSize = v end)
 
 	bind(RunService.RenderStepped, function()
-		local cam = workspace.CurrentCamera
-		if Fov.Enabled and cam and math.abs(cam.FieldOfView - Fov.Value) > 0.05 then
-			cam.FieldOfView = Fov.Value
+		local camera = workspace.CurrentCamera
+		if Fov.Enabled and camera and math.abs(camera.FieldOfView - Fov.Value) > 0.05 then
+			camera.FieldOfView = Fov.Value
 		end
 		if Fov.Circle and Drawing then
 			if not fovCircle then
@@ -1001,7 +1315,7 @@ do
 				if ok then fovCircle = circle end
 			end
 			if fovCircle then
-				local viewport = cam and cam.ViewportSize or Vector2.new(1920, 1080)
+				local viewport = camera and camera.ViewportSize or Vector2.new(1920, 1080)
 				fovCircle.Position = viewport / 2
 				fovCircle.Radius = Fov.CircleSize
 				fovCircle.Visible = Fov.Enabled
@@ -1013,7 +1327,7 @@ do
 end
 
 ---------------------------------------------------------------------------
--- Вкладка Movement (Auto BunnyHop)
+-- Вкладка Movement (Auto BunnyHop — логика без изменений)
 ---------------------------------------------------------------------------
 local Bhop = {
 	Enabled = false,
@@ -1021,19 +1335,17 @@ local Bhop = {
 	Delay = 0,
 	MovingOnly = false,
 	CrouchJump = false,
-	PauseWithMenu = true,
+	PauseWithMenu = false,
 	Hooked = false,
 }
-local BhopState = { Module = nil, Buttons = nil, Original = nil, Wrapper = nil, LastDown = false, GroundSince = nil, Jumps = 0 }
+local BhopState = { Module = nil, Buttons = nil, Original = nil, Wrapper = nil, LastDown = false, GroundSince = nil }
 
 local function crouchJump()
 	if not VirtualInputManager then return end
 	pcall(function()
 		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftControl, false, game)
 		task.delay(0.25, function()
-			pcall(function()
-				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
-			end)
+			pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game) end)
 		end)
 	end)
 end
@@ -1090,10 +1402,7 @@ local function installBhop()
 				local modified = table.clone(input)
 				modified.Buttons = BhopState.Buttons.with(input.Buttons, BhopState.Buttons.Jump, jump)
 				BhopState.LastDown = jump
-				if jump then
-					BhopState.Jumps += 1
-					if Bhop.CrouchJump then crouchJump() end
-				end
+				if jump and Bhop.CrouchJump then crouchJump() end
 				return modified
 			end)
 			if success then return result end
@@ -1112,10 +1421,8 @@ task.spawn(function()
 		end
 		task.wait(0.5)
 	end
-	Bhop.Hooked = false
 end)
 
--- Фолбэк через VirtualInputManager / Humanoid.Jump
 bind(RunService.Heartbeat, function()
 	if not Bhop.Enabled or Bhop.Hooked then return end
 	if GuiService.MenuIsOpen or UserInputService:GetFocusedTextBox() then return end
@@ -1138,39 +1445,23 @@ end)
 
 do
 	section(movePage, "Auto BunnyHop")
-	local statusLabel = create("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 16),
-		BackgroundTransparency = 1,
-		Font = Enum.Font.Gotham,
-		TextSize = 11,
-		TextColor3 = C.Dim,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Text = "Прыжок вшивается в ввод игры — тайминг идеальный.",
-	}, movePage)
-
 	makeToggle(movePage, "Включить Auto BunnyHop", false, function(v)
 		Bhop.Enabled = v
 		if v and not Bhop.Hooked then
-			notify("BHop", "Хук не установлен — работает резервный режим")
+			notify("BHop", "Резервный режим — хук ещё не готов")
 		end
 	end)
-
 	makeDropdown(movePage, "Режим", { "Auto", "Hold" }, "Auto", false, function(v) Bhop.Mode = v end)
-	makeSlider(movePage, "Задержка прыжка", 0, 150, 0, " ms", function(v) Bhop.Delay = v end)
-	makeToggle(movePage, "Только в движении", false, function(v) Bhop.MovingOnly = v end)
-	makeToggle(movePage, "Крауч-прыжок (Ctrl)", false, function(v) Bhop.CrouchJump = v end)
-	makeToggle(movePage, "Пауза при открытом меню", true, function(v) Bhop.PauseWithMenu = v end)
-
-	section(movePage, "Инфо")
+	section(movePage, "Подсказка")
 	create("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 60),
+		Size = UDim2.new(1, 0, 0, 62),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Gotham,
 		TextSize = 11,
 		TextColor3 = C.Dim,
 		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		Text = "Auto — прыгает сам при касании земли.\nHold — только пока зажата кнопка прыжка.\nПривяжите Jump на колесо и стрейфьте A/D — скорость держится.",
+		Text = "Auto — прыгает сам при касании земли.\nHold — только пока зажата кнопка прыжка.\nJump на колесо + стрейфы A/D удерживают скорость.",
 	}, movePage)
 end
 
@@ -1182,15 +1473,17 @@ local function setMenu(state)
 	if state then
 		mini.Visible = false
 		main.Visible = true
-		main.Size = UDim2.fromOffset(560, 388)
-		tween(main, 0.22, { Size = UDim2.fromOffset(580, 400) })
+		main.Size = UDim2.fromOffset(580, 406)
+		tween(main, 0.22, { Size = UDim2.fromOffset(600, 420) })
 	else
+		closeAllPopups()
 		main.Visible = false
 		mini.Visible = true
 	end
 end
 
 mini.MouseButton1Click:Connect(function() setMenu(true) end)
+closeButton.MouseButton1Click:Connect(function() setMenu(false) end)
 
 bind(UserInputService.InputBegan, function(input, processed)
 	if processed then return end
@@ -1206,9 +1499,10 @@ function gui:Unload()
 	if BhopState.Module and BhopState.Module.SampleInput == BhopState.Wrapper then
 		BhopState.Module.SampleInput = BhopState.Original
 	end
+	pcall(removeKnife)
 	restoreAllSkins()
-	local cam = workspace.CurrentCamera
-	if cam and Fov.Original then cam.FieldOfView = Fov.Original end
+	local camera = workspace.CurrentCamera
+	if camera and Fov.Original then camera.FieldOfView = Fov.Original end
 	if fovCircle then pcall(function() fovCircle:Remove() end) end
 	for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
 	screen:Destroy()
