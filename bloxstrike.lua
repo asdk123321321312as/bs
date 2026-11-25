@@ -1,7 +1,3 @@
---[[  KittenScript for Blox Strike
-      SkinChanger · Camera FOV · Auto BunnyHop
-      Toggle menu: RightShift
-]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -49,14 +45,18 @@ local function create(class, props, parent)
 	return o
 end
 
-local function tween(obj, time, props, style)
-	local t = TweenService:Create(obj, TweenInfo.new(time, style or Enum.EasingStyle.Quart, Enum.EasingDirection.Out), props)
+local function tween(obj, time, props, style, dir)
+	local t = TweenService:Create(
+		obj,
+		TweenInfo.new(time, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out),
+		props
+	)
 	t:Play()
 	return t
 end
 
 local function corner(obj, r)
-	create("UICorner", { CornerRadius = UDim.new(0, r or 8) }, obj)
+	create("UICorner", { CornerRadius = UDim.new(0, r or 10) }, obj)
 end
 
 local function stroke(obj, color, thickness, trans)
@@ -85,25 +85,25 @@ local screen = create("ScreenGui", {
 ---------------------------------------------------------------------------
 local notifyHolder = create("Frame", {
 	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -18, 0, 18),
+	Position = UDim2.new(1, -20, 0, 20),
 	Size = UDim2.fromOffset(258, 10),
 	BackgroundTransparency = 1,
 }, screen)
-create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, notifyHolder)
+create("UIListLayout", { Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }, notifyHolder)
 
 local function notify(titleText, body)
 	local card = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 54),
+		Size = UDim2.new(1, 0, 0, 56),
 		BackgroundColor3 = C.White,
-		BackgroundTransparency = 0.04,
+		BackgroundTransparency = 1,
 	}, notifyHolder)
-	corner(card, 10)
-	stroke(card, C.Accent, 1, 0.5)
-	create("Frame", { Size = UDim2.new(0, 3, 1, -14), Position = UDim2.fromOffset(0, 7), BackgroundColor3 = C.Accent, BorderSizePixel = 0 }, card)
+	corner(card, 14)
+	stroke(card, C.Stroke, 1, 0.35)
+	create("Frame", { Size = UDim2.new(0, 3, 1, -16), Position = UDim2.fromOffset(0, 8), BackgroundColor3 = C.Accent, BorderSizePixel = 0 }, card)
 	local t = create("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(12, 7),
-		Size = UDim2.new(1, -20, 0, 16),
+		Position = UDim2.fromOffset(13, 8),
+		Size = UDim2.new(1, -22, 0, 16),
 		Font = Enum.Font.GothamBold,
 		TextSize = 12,
 		TextColor3 = C.AccentDeep,
@@ -112,8 +112,8 @@ local function notify(titleText, body)
 	}, card)
 	local b = create("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(12, 25),
-		Size = UDim2.new(1, -20, 0, 22),
+		Position = UDim2.fromOffset(13, 26),
+		Size = UDim2.new(1, -22, 0, 22),
 		Font = Enum.Font.Gotham,
 		TextSize = 11,
 		TextColor3 = C.Dim,
@@ -121,6 +121,7 @@ local function notify(titleText, body)
 		TextWrapped = true,
 		Text = body,
 	}, card)
+	tween(card, 0.22, { BackgroundTransparency = 0.03 })
 	task.delay(4, function()
 		pcall(function()
 			tween(card, 0.25, { BackgroundTransparency = 1 })
@@ -136,15 +137,15 @@ end
 -- Мини-кнопка
 ---------------------------------------------------------------------------
 local mini = create("TextButton", {
-	Size = UDim2.fromOffset(120, 32),
-	Position = UDim2.new(0, 18, 0, 18),
+	Size = UDim2.fromOffset(120, 34),
+	Position = UDim2.new(0, 20, 0, 20),
 	BackgroundColor3 = C.White,
 	AutoButtonColor = false,
 	Text = "",
 	Visible = false,
 }, screen)
-corner(mini, 16)
-stroke(mini, C.Accent, 1, 0.4)
+corner(mini, 17)
+stroke(mini, C.Accent, 1, 0.35)
 create("TextLabel", {
 	Size = UDim2.fromScale(1, 1),
 	BackgroundTransparency = 1,
@@ -154,10 +155,21 @@ create("TextLabel", {
 	Text = "Kitten",
 }, mini)
 create("Frame", { Size = UDim2.new(0, 4, 1, -12), Position = UDim2.fromOffset(0, 6), BackgroundColor3 = C.Accent, BorderSizePixel = 0 }, mini)
+corner(mini, 17)
 
 ---------------------------------------------------------------------------
--- Окно
+-- Тень + окно
 ---------------------------------------------------------------------------
+local shadow = create("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(616, 436),
+	BackgroundColor3 = Color3.fromRGB(120, 60, 90),
+	BackgroundTransparency = 0.82,
+	BorderSizePixel = 0,
+}, screen)
+corner(shadow, 30)
+
 local main = create("Frame", {
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Position = UDim2.fromScale(0.5, 0.5),
@@ -166,8 +178,8 @@ local main = create("Frame", {
 	BorderSizePixel = 0,
 	ClipsDescendants = true,
 }, screen)
-corner(main, 14)
-stroke(main, C.Stroke, 1, 0.15)
+corner(main, 22)
+stroke(main, C.Stroke, 1, 0.1)
 create("UIGradient", {
 	Rotation = 90,
 	Color = ColorSequence.new({
@@ -175,12 +187,21 @@ create("UIGradient", {
 		ColorSequenceKeypoint.new(1, C.BgBottom),
 	}),
 }, main)
+local mainScale = create("UIScale", { Scale = 1 }, main)
+
+local function syncShadow()
+	shadow.Position = main.Position
+	shadow.Size = UDim2.fromOffset(main.AbsoluteSize.X + 16, main.AbsoluteSize.Y + 16)
+	shadow.Visible = main.Visible
+end
+bind(main:GetPropertyChangedSignal("Position"), syncShadow)
+bind(main:GetPropertyChangedSignal("AbsoluteSize"), syncShadow)
 
 local glow = create("Frame", {
 	Size = UDim2.new(1, 0, 0, 3),
 	BackgroundColor3 = C.Accent,
 	BorderSizePixel = 0,
-	BackgroundTransparency = 0.2,
+	BackgroundTransparency = 0.25,
 }, main)
 
 -- Шапка
@@ -189,8 +210,8 @@ local header = create("Frame", {
 	BackgroundTransparency = 1,
 }, main)
 
-local title = create("TextLabel", {
-	Position = UDim2.fromOffset(20, 9),
+create("TextLabel", {
+	Position = UDim2.fromOffset(22, 10),
 	Size = UDim2.new(0, 260, 0, 24),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.GothamBlack,
@@ -201,7 +222,7 @@ local title = create("TextLabel", {
 }, header)
 
 create("TextLabel", {
-	Position = UDim2.fromOffset(21, 33),
+	Position = UDim2.fromOffset(23, 34),
 	Size = UDim2.new(0, 280, 0, 14),
 	BackgroundTransparency = 1,
 	Font = Enum.Font.Gotham,
@@ -213,23 +234,24 @@ create("TextLabel", {
 
 local closeButton = create("TextButton", {
 	AnchorPoint = Vector2.new(1, 0.5),
-	Position = UDim2.new(1, -16, 0.5, 0),
+	Position = UDim2.new(1, -18, 0.5, 0),
 	Size = UDim2.fromOffset(28, 28),
 	BackgroundColor3 = C.White,
+	BackgroundTransparency = 0.2,
 	AutoButtonColor = false,
 	Text = "",
 }, header)
-corner(closeButton, 8)
+corner(closeButton, 10)
 stroke(closeButton, C.Stroke, 1, 0.5)
 create("Frame", { Size = UDim2.fromOffset(10, 1.7), Position = UDim2.fromOffset(9, 13), Rotation = 45, BackgroundColor3 = C.Text, BorderSizePixel = 0 }, closeButton)
 create("Frame", { Size = UDim2.fromOffset(10, 1.7), Position = UDim2.fromOffset(9, 13), Rotation = -45, BackgroundColor3 = C.Text, BorderSizePixel = 0 }, closeButton)
 
-local divider = create("Frame", {
-	Position = UDim2.fromOffset(16, 58),
-	Size = UDim2.new(1, -32, 0, 1),
+create("Frame", {
+	Position = UDim2.fromOffset(18, 58),
+	Size = UDim2.new(1, -36, 0, 1),
 	BackgroundColor3 = C.Stroke,
 	BorderSizePixel = 0,
-	BackgroundTransparency = 0.4,
+	BackgroundTransparency = 0.45,
 }, main)
 
 -- Перетаскивание
@@ -258,19 +280,19 @@ end
 
 -- Сайдбар
 local sidebar = create("Frame", {
-	Position = UDim2.fromOffset(16, 70),
-	Size = UDim2.new(0, 146, 1, -86),
+	Position = UDim2.fromOffset(18, 72),
+	Size = UDim2.new(0, 146, 1, -90),
 	BackgroundColor3 = C.Panel,
-	BackgroundTransparency = 0.2,
+	BackgroundTransparency = 0.25,
 	BorderSizePixel = 0,
 }, main)
-corner(sidebar, 10)
-create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, sidebar)
-create("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, sidebar)
+corner(sidebar, 14)
+create("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, sidebar)
+create("UIPadding", { PaddingTop = UDim.new(0, 9), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, sidebar)
 
 local content = create("Frame", {
-	Position = UDim2.fromOffset(176, 70),
-	Size = UDim2.new(1, -192, 1, -86),
+	Position = UDim2.fromOffset(178, 72),
+	Size = UDim2.new(1, -196, 1, -90),
 	BackgroundTransparency = 1,
 	ClipsDescendants = true,
 }, main)
@@ -282,16 +304,19 @@ local function switchTab(name)
 	CurrentTab = name
 	for tabName, data in pairs(Tabs) do
 		local active = tabName == name
-		tween(data.Button, 0.18, { BackgroundColor3 = active and C.White or C.Panel })
-		tween(data.Bar, 0.18, { BackgroundTransparency = active and 0 or 1 })
-		tween(data.Label, 0.18, { TextColor3 = active and C.AccentDeep or C.Dim })
+		tween(data.Button, 0.2, { BackgroundColor3 = active and C.White or C.Panel })
+		tween(data.Bar, 0.2, { BackgroundTransparency = active and 0 or 1 })
+		tween(data.Label, 0.2, { TextColor3 = active and C.AccentDeep or C.Dim })
+		tween(data.Icon, 0.2, { TextColor3 = active and C.Accent or C.Dim, TextTransparency = active and 0 or 0.35 })
 		if active then
 			data.Group.Visible = true
-			data.Group.Position = UDim2.fromOffset(12, 0)
-			tween(data.Group, 0.2, { Position = UDim2.fromOffset(0, 0) })
+			data.Group.Position = UDim2.fromOffset(14, 0)
+			data.Group.GroupTransparency = 0.55
+			tween(data.Group, 0.26, { GroupTransparency = 0, Position = UDim2.fromOffset(0, 0) })
 		else
-			tween(data.Group, 0.14, { Position = UDim2.fromOffset(12, 0) })
-			task.delay(0.15, function()
+			data.Group.GroupTransparency = math.min(data.Group.GroupTransparency, 0.98)
+			tween(data.Group, 0.16, { Position = UDim2.fromOffset(14, 0) })
+			task.delay(0.17, function()
 				if CurrentTab ~= tabName then data.Group.Visible = false end
 			end)
 		end
@@ -300,37 +325,39 @@ end
 
 local function addTab(name, iconText)
 	local btn = create("TextButton", {
-		Size = UDim2.new(1, 0, 0, 36),
+		Size = UDim2.new(1, 0, 0, 38),
 		BackgroundColor3 = C.Panel,
-		BackgroundTransparency = 0.2,
+		BackgroundTransparency = 0.25,
 		AutoButtonColor = false,
 		Text = "",
 	}, sidebar)
 	btn.LayoutOrder = #sidebar:GetChildren()
+	corner(btn, 11)
 
 	local bar = create("Frame", {
-		Size = UDim2.new(0, 3, 1, -16),
-		Position = UDim2.fromOffset(0, 8),
+		Size = UDim2.new(0, 3, 1, -18),
+		Position = UDim2.fromOffset(0, 9),
 		BackgroundColor3 = C.Accent,
 		BorderSizePixel = 0,
 		BackgroundTransparency = 1,
 	}, btn)
 	corner(bar, 2)
 
-	create("TextLabel", {
-		Position = UDim2.fromOffset(12, 0),
-		Size = UDim2.fromOffset(14, 36),
+	local icon = create("TextLabel", {
+		Position = UDim2.fromOffset(13, 0),
+		Size = UDim2.fromOffset(14, 38),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		TextSize = 12,
-		TextColor3 = C.Accent,
+		TextColor3 = C.Dim,
+		TextTransparency = 0.35,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Text = iconText,
 	}, btn)
 
 	local label = create("TextLabel", {
-		Position = UDim2.fromOffset(32, 0),
-		Size = UDim2.new(1, -38, 1, 0),
+		Position = UDim2.fromOffset(33, 0),
+		Size = UDim2.new(1, -39, 1, 0),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 12,
@@ -339,9 +366,10 @@ local function addTab(name, iconText)
 		Text = name,
 	}, btn)
 
-	local group = create("Frame", {
+	local group = create("CanvasGroup", {
 		Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = 1,
+		GroupTransparency = 0,
 		Visible = false,
 	}, content)
 
@@ -355,18 +383,18 @@ local function addTab(name, iconText)
 		ScrollBarImageColor3 = C.Accent,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 	}, group)
-	create("UIListLayout", { Padding = UDim.new(0, 7), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
-	create("UIPadding", { PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 14) }, scroll)
+	create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
+	create("UIPadding", { PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 16) }, scroll)
 
 	btn.MouseButton1Click:Connect(function() switchTab(name) end)
 	btn.MouseEnter:Connect(function()
-		if CurrentTab ~= name then tween(btn, 0.15, { BackgroundColor3 = C.Hover, BackgroundTransparency = 0 }) end
+		if CurrentTab ~= name then tween(btn, 0.18, { BackgroundColor3 = C.Hover, BackgroundTransparency = 0 }) end
 	end)
 	btn.MouseLeave:Connect(function()
-		if CurrentTab ~= name then tween(btn, 0.15, { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.2 }) end
+		if CurrentTab ~= name then tween(btn, 0.18, { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.25 }) end
 	end)
 
-	Tabs[name] = { Button = btn, Bar = bar, Label = label, Group = group, Scroll = scroll }
+	Tabs[name] = { Button = btn, Bar = bar, Label = label, Icon = icon, Group = group, Scroll = scroll }
 	return scroll
 end
 
@@ -379,7 +407,7 @@ local movePage = addTab("Movement", "⇅")
 ---------------------------------------------------------------------------
 local function section(parent, text)
 	return create("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 18),
+		Size = UDim2.new(1, 0, 0, 20),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
 		TextSize = 10,
@@ -391,21 +419,21 @@ end
 
 local function row(parent, height)
 	local r = create("Frame", {
-		Size = UDim2.new(1, 0, 0, height or 36),
+		Size = UDim2.new(1, 0, 0, height or 38),
 		BackgroundColor3 = C.Element,
 		BackgroundTransparency = 0.15,
 		BorderSizePixel = 0,
 	}, parent)
-	corner(r, 8)
-	stroke(r, C.Stroke, 1, 0.55)
+	corner(r, 12)
+	stroke(r, C.Stroke, 1, 0.6)
 	return r
 end
 
 local function makeToggle(parent, text, default, callback)
-	local r = row(parent, 36)
+	local r = row(parent, 38)
 	local label = create("TextLabel", {
-		Position = UDim2.fromOffset(12, 0),
-		Size = UDim2.new(1, -68, 1, 0),
+		Position = UDim2.fromOffset(14, 0),
+		Size = UDim2.new(1, -70, 1, 0),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 12,
@@ -415,7 +443,7 @@ local function makeToggle(parent, text, default, callback)
 	}, r)
 	local pill = create("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
+		Position = UDim2.new(1, -13, 0.5, 0),
 		Size = UDim2.fromOffset(38, 20),
 		BackgroundColor3 = default and C.Accent or C.Off,
 		BorderSizePixel = 0,
@@ -432,8 +460,8 @@ local function makeToggle(parent, text, default, callback)
 
 	local state = default
 	local function paint()
-		tween(pill, 0.16, { BackgroundColor3 = state and C.Accent or C.Off })
-		tween(knob, 0.16, {
+		tween(pill, 0.2, { BackgroundColor3 = state and C.Accent or C.Off })
+		tween(knob, 0.2, {
 			Position = state and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
 		})
 	end
@@ -448,10 +476,10 @@ local function makeToggle(parent, text, default, callback)
 end
 
 local function makeSlider(parent, text, min, max, default, suffix, callback)
-	local r = row(parent, 48)
+	local r = row(parent, 50)
 	create("TextLabel", {
-		Position = UDim2.fromOffset(12, 7),
-		Size = UDim2.new(1, -70, 0, 16),
+		Position = UDim2.fromOffset(14, 8),
+		Size = UDim2.new(1, -72, 0, 16),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 12,
@@ -461,7 +489,7 @@ local function makeSlider(parent, text, min, max, default, suffix, callback)
 	}, r)
 	local valueLabel = create("TextLabel", {
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -12, 7, 0),
+		Position = UDim2.new(1, -13, 8, 0),
 		Size = UDim2.fromOffset(62, 16),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamBold,
@@ -472,8 +500,8 @@ local function makeSlider(parent, text, min, max, default, suffix, callback)
 	}, r)
 
 	local track = create("Frame", {
-		Position = UDim2.fromOffset(12, 34),
-		Size = UDim2.new(1, -24, 0, 5),
+		Position = UDim2.fromOffset(14, 36),
+		Size = UDim2.new(1, -28, 0, 5),
 		BackgroundColor3 = C.Off,
 		BorderSizePixel = 0,
 	}, r)
@@ -492,7 +520,7 @@ local function makeSlider(parent, text, min, max, default, suffix, callback)
 		BorderSizePixel = 0,
 	}, track)
 	corner(knob, 6)
-	stroke(knob, C.Accent, 1.5, 0.15)
+	stroke(knob, C.Accent, 1.5, 0.1)
 
 	local value = default
 	local function set(v)
@@ -528,7 +556,7 @@ end
 
 local function makeButton(parent, text, callback, primary)
 	local b = create("TextButton", {
-		Size = UDim2.new(1, 0, 0, 34),
+		Size = UDim2.new(1, 0, 0, 36),
 		BackgroundColor3 = primary and C.Accent or C.Element,
 		BackgroundTransparency = primary and 0 or 0.15,
 		AutoButtonColor = false,
@@ -537,13 +565,13 @@ local function makeButton(parent, text, callback, primary)
 		TextColor3 = primary and C.White or C.Text,
 		Text = text,
 	}, parent)
-	corner(b, 8)
-	if not primary then stroke(b, C.Stroke, 1, 0.55) end
+	corner(b, 12)
+	if not primary then stroke(b, C.Stroke, 1, 0.6) end
 	b.MouseEnter:Connect(function()
-		tween(b, 0.15, primary and { BackgroundColor3 = C.AccentDeep } or { BackgroundColor3 = C.Hover, TextColor3 = C.AccentDeep })
+		tween(b, 0.18, primary and { BackgroundColor3 = C.AccentDeep } or { BackgroundColor3 = C.Hover, TextColor3 = C.AccentDeep })
 	end)
 	b.MouseLeave:Connect(function()
-		tween(b, 0.15, primary and { BackgroundColor3 = C.Accent } or { BackgroundColor3 = C.Element, TextColor3 = C.Text })
+		tween(b, 0.18, primary and { BackgroundColor3 = C.Accent } or { BackgroundColor3 = C.Element, TextColor3 = C.Text })
 	end)
 	b.MouseButton1Click:Connect(callback)
 	return b
@@ -551,10 +579,10 @@ end
 
 local openPopups = {}
 local function makeDropdown(parent, text, options, default, searchable, callback)
-	local r = row(parent, 36)
+	local r = row(parent, 38)
 	local label = create("TextLabel", {
-		Position = UDim2.fromOffset(12, 0),
-		Size = UDim2.new(1, -40, 1, 0),
+		Position = UDim2.fromOffset(14, 0),
+		Size = UDim2.new(1, -42, 1, 0),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 12,
@@ -565,7 +593,7 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 	}, r)
 	local chev = create("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
+		Position = UDim2.new(1, -14, 0.5, 0),
 		Size = UDim2.fromOffset(10, 6),
 		BackgroundTransparency = 1,
 	}, r)
@@ -597,18 +625,20 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 			if not filter or filter == "" or string.find(string.lower(option), string.lower(filter), 1, true) then
 				count += 1
 				local b = create("TextButton", {
-					Size = UDim2.new(1, 0, 0, 26),
+					Size = UDim2.new(1, 0, 0, 27),
 					BackgroundColor3 = option == value and C.Panel or C.Element,
 					AutoButtonColor = false,
 					Font = Enum.Font.Gotham,
 					TextSize = 11,
 					TextColor3 = option == value and C.AccentDeep or C.Text,
 					TextXAlignment = Enum.TextXAlignment.Left,
+					TextTruncate = Enum.TextTruncate.AtEnd,
 					Text = "   " .. option,
 				}, list)
-				b.MouseEnter:Connect(function() tween(b, 0.1, { BackgroundColor3 = C.Hover }) end)
+				corner(b, 7)
+				b.MouseEnter:Connect(function() tween(b, 0.12, { BackgroundColor3 = C.Hover }) end)
 				b.MouseLeave:Connect(function()
-					tween(b, 0.1, { BackgroundColor3 = option == value and C.Panel or C.Element })
+					tween(b, 0.12, { BackgroundColor3 = option == value and C.Panel or C.Element })
 				end)
 				b.MouseButton1Click:Connect(function()
 					value = option
@@ -618,7 +648,7 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 				end)
 			end
 		end
-		list.CanvasSize = UDim2.new(0, 0, 0, count * 28 + 6)
+		list.CanvasSize = UDim2.new(0, 0, 0, count * 29 + 6)
 	end
 
 	clickable.MouseButton1Click:Connect(function()
@@ -634,19 +664,20 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 		local width = math.max(190, r.AbsoluteSize.X)
 		local x = math.clamp(pos.X, 8, math.max(8, main.AbsoluteSize.X - width - 8))
 		popup = create("Frame", {
-			Position = UDim2.fromOffset(x, pos.Y + r.AbsoluteSize.Y + 4),
-			Size = UDim2.fromOffset(width, searchable and 200 or 180),
+			Position = UDim2.fromOffset(x, pos.Y + r.AbsoluteSize.Y + 5),
+			Size = UDim2.fromOffset(width, searchable and 202 or 182),
 			BackgroundColor3 = C.White,
+			BackgroundTransparency = 0.02,
 			ZIndex = 60,
 		}, main)
-		corner(popup, 8)
+		corner(popup, 12)
 		stroke(popup, C.Stroke, 1, 0.15)
 		table.insert(openPopups, popup)
 
 		if searchable then
 			search = create("TextBox", {
 				Position = UDim2.fromOffset(6, 6),
-				Size = UDim2.new(1, -12, 0, 26),
+				Size = UDim2.new(1, -12, 0, 27),
 				BackgroundColor3 = C.Element,
 				Font = Enum.Font.Gotham,
 				TextSize = 11,
@@ -657,13 +688,13 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 				ClearTextOnFocus = false,
 				ZIndex = 61,
 			}, popup)
-			corner(search, 6)
+			corner(search, 7)
 			search:GetPropertyChangedSignal("Text"):Connect(function() build(search.Text) end)
 		end
 
 		list = create("ScrollingFrame", {
-			Position = UDim2.fromOffset(6, searchable and 36 or 6),
-			Size = UDim2.new(1, -12, 1, searchable and -42 or -12),
+			Position = UDim2.fromOffset(6, searchable and 37 or 6),
+			Size = UDim2.new(1, -12, 1, searchable and -43 or -12),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			CanvasSize = UDim2.new(),
@@ -676,9 +707,14 @@ local function makeDropdown(parent, text, options, default, searchable, callback
 	end)
 
 	return {
-		Set = function(v) value = v label.Text = v end,
+		Set = function(v)
+			if type(v) ~= "string" then v = tostring(v) end
+			value = v
+			label.Text = v
+		end,
 		Get = function() return value end,
 		SetOptions = function(o)
+			if type(o) ~= "table" then o = {} end
 			options = o
 			if open then build(search and search.Text or "") end
 		end,
@@ -699,14 +735,6 @@ local function refreshAssets()
 	WeaponAnims = Assets and Assets:FindFirstChild("WeaponAnimations")
 end
 refreshAssets()
-
-task.spawn(function()
-	for _ = 1, 120 do
-		if Skins and WeaponAssets and WeaponAnims then return end
-		refreshAssets()
-		task.wait(1)
-	end
-end)
 
 local IGNORE = {
 	["HE Grenade"] = true, ["Incendiary Grenade"] = true, ["Molotov"] = true,
@@ -971,11 +999,10 @@ task.spawn(function()
 end)
 
 ---------------------------------------------------------------------------
--- Скинчейнджер (новая логика)
+-- Скинчейнджер
 ---------------------------------------------------------------------------
-local skinTab = {}
-
 local weaponLoadout = {}
+local skinTab = { initialized = false }
 
 local function collectList(folderName)
 	local out = {}
@@ -991,31 +1018,16 @@ local function collectList(folderName)
 	return out
 end
 
-local function repaintEverything()
-	restoreAll()
-	local camera = workspace.CurrentCamera
-	if camera then
-		for _, model in ipairs(camera:GetChildren()) do
-			if model:IsA("Model") and model ~= Knife.VM then
-				local sel = weaponLoadout[model.Name]
-				if sel then pcall(paintModel, model, model.Name, sel.Skin, sel.Wear) end
-			end
-		end
-	end
-	if Knife.VM then
-		if Knife.Skin then pcall(paintModel, Knife.VM, Knife.Model, Knife.Skin, Knife.Wear) end
-		if Knife.GloveSkin then pcall(paintGloves, Knife.VM, Knife.GloveSkin, Knife.GloveWear) end
-	end
-end
-
 do
 	local category = "Ножи"
 	local currentModel = nil
 	local currentSkin = nil
 	local currentWear = "Factory New"
 	local searchQuery = ""
+	local searchToken = 0
 
-	local modelDropdown, wearDropdown, skinList, emptyLabel, searchBox
+	local modelDropdown, wearDropdown, skinList, emptyLabel, countLabel
+	local categoryButtons = {}
 
 	local function applyCurrent(silent)
 		if not currentSkin or not currentModel then return end
@@ -1055,15 +1067,16 @@ do
 		for _, child in ipairs(skinList:GetChildren()) do
 			if child:IsA("TextButton") then child:Destroy() end
 		end
-		local list = collectList(currentModel or "")
+		local all = collectList(currentModel or "")
 		local shown = 0
-		for _, name in ipairs(list) do
+		for _, name in ipairs(all) do
 			if searchQuery == "" or string.find(string.lower(name), string.lower(searchQuery), 1, true) then
 				shown += 1
 				local selected = name == currentSkin
 				local b = create("TextButton", {
-					Size = UDim2.new(1, 0, 0, 26),
+					Size = UDim2.new(1, 0, 0, 28),
 					BackgroundColor3 = selected and C.Panel or C.Element,
+					BackgroundTransparency = selected and 0.05 or 0.3,
 					AutoButtonColor = false,
 					Font = Enum.Font.Gotham,
 					TextSize = 11,
@@ -1072,9 +1085,10 @@ do
 					TextTruncate = Enum.TextTruncate.AtEnd,
 					Text = "  " .. name,
 				}, skinList)
-				b.MouseEnter:Connect(function() tween(b, 0.1, { BackgroundColor3 = C.Hover }) end)
+				corner(b, 8)
+				b.MouseEnter:Connect(function() tween(b, 0.12, { BackgroundColor3 = C.Hover, BackgroundTransparency = 0 }) end)
 				b.MouseLeave:Connect(function()
-					tween(b, 0.1, { BackgroundColor3 = selected and C.Panel or C.Element })
+					tween(b, 0.12, { BackgroundColor3 = selected and C.Panel or C.Element, BackgroundTransparency = selected and 0.05 or 0.3 })
 				end)
 				b.MouseButton1Click:Connect(function()
 					currentSkin = name
@@ -1083,17 +1097,18 @@ do
 				end)
 			end
 		end
-		skinList.CanvasSize = UDim2.new(0, 0, 0, shown * 28 + 6)
+		skinList.CanvasSize = UDim2.new(0, 0, 0, shown * 30 + 8)
 		emptyLabel.Visible = shown == 0
-		emptyLabel.Text = #list == 0 and "Скины не найдены" or "Ничего не совпало"
+		emptyLabel.Text = #all == 0 and "Скины не найдены" or "Ничего не совпало"
+		countLabel.Text = shown > 0 and (shown .. " скинов") or ""
 	end
 
 	local function loadCategory(name)
 		category = name
-		for key, btn in pairs(skinTab.categoryButtons or {}) do
+		for key, btn in pairs(categoryButtons) do
 			local active = key == name
-			tween(btn, 0.15, { BackgroundColor3 = active and C.Accent or C.Element })
-			tween(btn, 0.15, { TextColor3 = active and C.White or C.Text })
+			tween(btn, 0.18, { BackgroundColor3 = active and C.Accent or C.Element })
+			tween(btn, 0.18, { TextColor3 = active and C.White or C.Text })
 		end
 
 		local models = {}
@@ -1107,8 +1122,9 @@ do
 			end
 			table.sort(models)
 			currentModel = models[1]
-			modelDropdown:SetOptions(models)
-			modelDropdown:Set(currentModel or "—")
+			modelDropdown.SetOptions(models)
+			modelDropdown.Set(currentModel or "—")
+			Knife.Model = currentModel or Knife.Model
 		elseif name == "Оружие" then
 			if Skins then
 				for _, folder in ipairs(Skins:GetChildren()) do
@@ -1120,32 +1136,30 @@ do
 			end
 			table.sort(models)
 			currentModel = models[1]
-			modelDropdown:SetOptions(models)
-			modelDropdown:Set(currentModel or "—")
+			modelDropdown.SetOptions(models)
+			modelDropdown.Set(currentModel or "—")
 		else
 			currentModel = "Sports Gloves"
-			modelDropdown:SetOptions({ "Sports Gloves" })
-			modelDropdown:Set("Sports Gloves")
+			modelDropdown.SetOptions({ "Sports Gloves" })
+			modelDropdown.Set("Sports Gloves")
 		end
 
 		currentSkin = nil
 		refreshList()
 	end
 
-	-- категории
 	local catRow = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 32),
+		Size = UDim2.new(1, 0, 0, 34),
 		BackgroundTransparency = 1,
 	}, skinPage)
 	create("UIListLayout", {
 		FillDirection = Enum.FillDirection.Horizontal,
-		Padding = UDim.new(0, 6),
+		Padding = UDim.new(0, 7),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, catRow)
-	skinTab.categoryButtons = {}
 	for index, name in ipairs({ "Ножи", "Перчатки", "Оружие" }) do
 		local b = create("TextButton", {
-			Size = UDim2.new(0.333, -4, 1, 0),
+			Size = UDim2.new(0.333, -5, 1, 0),
 			LayoutOrder = index,
 			BackgroundColor3 = C.Element,
 			BackgroundTransparency = 0.15,
@@ -1155,10 +1169,10 @@ do
 			TextColor3 = C.Text,
 			Text = name,
 		}, catRow)
-		corner(b, 8)
-		stroke(b, C.Stroke, 1, 0.55)
+		corner(b, 10)
+		stroke(b, C.Stroke, 1, 0.6)
 		b.MouseButton1Click:Connect(function() loadCategory(name) end)
-		skinTab.categoryButtons[name] = b
+		categoryButtons[name] = b
 	end
 
 	section(skinPage, "Модель")
@@ -1168,10 +1182,23 @@ do
 		refreshList()
 	end)
 
+	local rawSet = modelDropdown.Set
+	modelDropdown.Set = function(v)
+		rawSet(v)
+	end
+
 	section(skinPage, "Скин")
-	searchBox = create("TextBox", {
-		Size = UDim2.new(1, 0, 0, 30),
+	local searchRow = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 32),
 		BackgroundColor3 = C.Element,
+		BackgroundTransparency = 0.15,
+	}, skinPage)
+	corner(searchRow, 12)
+	stroke(searchRow, C.Stroke, 1, 0.6)
+	local searchBox = create("TextBox", {
+		Position = UDim2.fromOffset(14, 0),
+		Size = UDim2.new(1, -28, 1, 0),
+		BackgroundTransparency = 1,
 		Font = Enum.Font.Gotham,
 		TextSize = 11,
 		TextColor3 = C.Text,
@@ -1179,35 +1206,49 @@ do
 		PlaceholderColor3 = C.Dim,
 		Text = "",
 		ClearTextOnFocus = false,
-	}, skinPage)
-	corner(searchBox, 8)
-	stroke(searchBox, C.Stroke, 1, 0.55)
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, searchRow)
 	searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-		searchQuery = searchBox.Text
-		refreshList()
+		searchToken += 1
+		local token = searchToken
+		task.delay(0.12, function()
+			if token ~= searchToken then return end
+			searchQuery = searchBox.Text
+			refreshList()
+		end)
 	end)
 
 	skinList = create("ScrollingFrame", {
-		Size = UDim2.new(1, 0, 0, 156),
+		Size = UDim2.new(1, 0, 0, 158),
 		BackgroundColor3 = C.Panel,
-		BackgroundTransparency = 0.35,
+		BackgroundTransparency = 0.4,
 		BorderSizePixel = 0,
 		CanvasSize = UDim2.new(),
 		ScrollBarThickness = 3,
 		ScrollBarImageColor3 = C.Accent,
 	}, skinPage)
-	corner(skinList, 8)
+	corner(skinList, 12)
 	stroke(skinList, C.Stroke, 1, 0.6)
 	create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, skinList)
-	create("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, skinList)
+	create("UIPadding", { PaddingTop = UDim.new(0, 5), PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5) }, skinList)
 	emptyLabel = create("TextLabel", {
-		Size = UDim2.new(1, 0, 1, 0),
+		Size = UDim2.new(1, 0, 0, 34),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Gotham,
 		TextSize = 11,
 		TextColor3 = C.Dim,
 		Text = "Загрузка...",
 	}, skinList)
+
+	countLabel = create("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 14),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 10,
+		TextColor3 = C.Dim,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Text = "",
+	}, skinPage)
 
 	section(skinPage, "Износ")
 	wearDropdown = makeDropdown(skinPage, "Factory New", wearList, "Factory New", false, function(wear)
@@ -1226,52 +1267,46 @@ do
 		notify("KittenScript", "Все скины сброшены")
 	end)
 
-	-- кастомный нож
 	section(skinPage, "Кастомный нож")
 	makeToggle(skinPage, "Применить выбранный нож", false, function(v)
 		Knife.Enabled = v
 		if v then pcall(spawnKnife) else pcall(removeKnife) end
 	end)
-	skinTab.modelDropdown = modelDropdown
 
-	-- смена модели ножа вручную
-	local originalDropdownCallback = modelDropdown.Set
-	modelDropdown.Set = function(v)
-		originalDropdownCallback(v)
-		if category == "Ножи" then
-			Knife.Model = v
+	-- смена модели ножа
+	bind(RunService.Heartbeat, function()
+		if not skinTab.initialized then return end
+		if category == "Ножи" and currentModel and Knife.Model ~= currentModel then
+			Knife.Model = currentModel
 			Knife.Skin = nil
 			if Knife.VM then
 				pcall(removeKnife)
-				task.wait(0.05)
-				pcall(spawnKnife)
+				task.defer(function() pcall(spawnKnife) end)
 			end
-			refreshList()
 		end
-	end
+	end)
 
-	-- авто-обновление, когда ассеты догрузились
+	-- первичная загрузка
 	task.spawn(function()
-		local loaded = false
-		for _ = 1, 120 do
-			if Skins and WeaponAssets and #collectList("Sports Gloves") + #collectList("AK-47") > 0 then
-				loaded = true
+		for _ = 1, 150 do
+			refreshAssets()
+			if Skins and WeaponAssets and #collectList("AK-47") + #collectList("Karate") >= 0 and Skins:GetChildren()[1] then
 				break
 			end
-			refreshAssets()
 			task.wait(1)
 		end
-		if loaded and CurrentTab == "Skins" then loadCategory("Ножи") end
-		if not loaded then emptyLabel.Text = "Ассеты не загрузились" end
+		if not Skins or not WeaponAssets then
+			emptyLabel.Text = "Ассеты не загрузились"
+			return
+		end
+		skinTab.initialized = true
+		if CurrentTab == "Skins" then loadCategory("Ножи") end
 	end)
 
 	bind(RunService.Heartbeat, function()
-		if not skinTab.initialized then
-			if Skins and WeaponAssets and CurrentTab == "Skins" then
-				skinTab.initialized = true
-				loadCategory("Ножи")
-			end
-			return
+		if skinTab.initialized and not skinTab.loaded and CurrentTab == "Skins" then
+			skinTab.loaded = true
+			loadCategory("Ножи")
 		end
 	end)
 
@@ -1473,7 +1508,7 @@ do
 
 	section(movePage, "Инфо")
 	create("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 62),
+		Size = UDim2.new(1, 0, 0, 64),
 		BackgroundTransparency = 1,
 		Font = Enum.Font.Gotham,
 		TextSize = 11,
@@ -1492,13 +1527,17 @@ local function setMenu(state)
 	if state then
 		mini.Visible = false
 		main.Visible = true
-		main.Size = UDim2.fromOffset(580, 406)
-		tween(main, 0.22, { Size = UDim2.fromOffset(600, 420) })
+		mainScale.Scale = 0.95
+		tween(mainScale, 0.28, { Scale = 1 })
+		syncShadow()
 	else
 		for _, popup in ipairs(table.clone(openPopups)) do pcall(function() popup:Destroy() end) end
 		table.clear(openPopups)
+		tween(mainScale, 0.18, { Scale = 0.95 })
+		task.wait(0.16)
 		main.Visible = false
 		mini.Visible = true
+		syncShadow()
 	end
 end
 
