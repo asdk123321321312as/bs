@@ -1,7 +1,4 @@
---[[  KittenScript for Blox Strike
-      Camera FOV · Auto BunnyHop · SkinChanger
-      Toggle menu: RightShift
-]]
+
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -10,6 +7,7 @@ local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local env = (getgenv and getgenv()) or shared
 
@@ -71,6 +69,9 @@ local function stroke(obj, color, thickness, trans)
 		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 	}, obj)
 end
+
+-- заглушка очереди автосейва, реальная функция подставится позже
+local Persist = { autosave = true, queue = function() end }
 
 ---------------------------------------------------------------------------
 -- ScreenGui
@@ -677,6 +678,7 @@ local function makeDropdown(parent, text, options, default, callback)
 		end,
 		Get = function() return value end,
 		Close = close,
+		Row = r,
 	}
 end
 
@@ -703,14 +705,125 @@ local function makeButton(parent, text, callback)
 	return r
 end
 
+local function makeSearch(parent, placeholder, onChanged)
+	local r = row(parent, 32)
+	local box = create("TextBox", {
+		Position = UDim2.fromOffset(12, 0),
+		Size = UDim2.new(1, -24, 1, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham,
+		TextSize = 11,
+		TextColor3 = C.Text,
+		PlaceholderColor3 = C.Dim,
+		PlaceholderText = placeholder,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "",
+		ClearTextOnFocus = false,
+	}, r)
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		onChanged(box.Text)
+	end)
+	return box
+end
+
+---------------------------------------------------------------------------
+-- Под-вкладки (для разбиения Skins)
+---------------------------------------------------------------------------
+local function makeSubTabs(host, names)
+	local bar = create("Frame", {
+		Size = UDim2.new(1, -12, 0, 30),
+		BackgroundColor3 = C.Panel,
+		BackgroundTransparency = 0.35,
+		BorderSizePixel = 0,
+	}, host)
+	corner(bar, 10)
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+	}, bar)
+	create("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, bar)
+
+	local hostArea = create("Frame", {
+		Position = UDim2.fromOffset(0, 36),
+		Size = UDim2.new(1, 0, 1, -36),
+		BackgroundTransparency = 1,
+		ClipsDescendants = true,
+	}, host)
+
+	local pages, current = {}, nil
+
+	local function show(name)
+		if current == name then return end
+		current = name
+		for n, d in pairs(pages) do
+			local active = n == name
+			tween(d.Button, 0.18, { BackgroundColor3 = active and C.White or C.Panel })
+			tween(d.Label, 0.18, { TextColor3 = active and C.AccentDeep or C.Dim })
+			if active then
+				d.Page.Visible = true
+				d.Page.GroupTransparency = 0.5
+				tween(d.Page, 0.2, { GroupTransparency = 0 })
+			else
+				d.Page.Visible = false
+			end
+		end
+	end
+
+	for i, name in ipairs(names) do
+		local b = create("TextButton", {
+			Size = UDim2.new(1 / #names, -6, 1, -8),
+			BackgroundColor3 = C.Panel,
+			AutoButtonColor = false,
+			Text = "",
+		}, bar)
+		b.LayoutOrder = i
+		corner(b, 7)
+		local l = create("TextLabel", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 11,
+			TextColor3 = C.Dim,
+			Text = name,
+		}, b)
+		local page = create("CanvasGroup", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			GroupTransparency = 0,
+			Visible = false,
+		}, hostArea)
+		local scroll = create("ScrollingFrame", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			ScrollBarThickness = 3,
+			ScrollBarImageColor3 = C.Accent,
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+		}, page)
+		create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
+		create("UIPadding", { PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 16) }, scroll)
+
+		b.MouseButton1Click:Connect(function() show(name) end)
+		pages[name] = { Button = b, Label = l, Page = page, Scroll = scroll }
+	end
+
+	show(names[1])
+	return pages, show
+end
+
 ---------------------------------------------------------------------------
 -- Вкладка Visuals (FOV)
 ---------------------------------------------------------------------------
 local Fov = { Enabled = false, Value = 90, Original = nil }
+local fovToggle, fovSlider
 
 do
 	section(visualPage, "Камера")
-	makeToggle(visualPage, "Включить FOV", false, function(v)
+	fovToggle = makeToggle(visualPage, "Включить FOV", false, function(v)
 		Fov.Enabled = v
 		local camera = workspace.CurrentCamera
 		if v and camera then
@@ -718,8 +831,12 @@ do
 		elseif camera and Fov.Original then
 			camera.FieldOfView = Fov.Original
 		end
+		Persist.queue()
 	end)
-	makeSlider(visualPage, "Значение FOV", 60, 130, 90, "", function(v) Fov.Value = v end)
+	fovSlider = makeSlider(visualPage, "Значение FOV", 60, 130, 90, "", function(v)
+		Fov.Value = v
+		Persist.queue()
+	end)
 
 	bind(RunService.RenderStepped, function()
 		local camera = workspace.CurrentCamera
@@ -734,6 +851,7 @@ end
 ---------------------------------------------------------------------------
 local Bhop = { Enabled = false, Mode = "Auto", Delay = 0, MovingOnly = false, CrouchJump = false, PauseWithMenu = false, Hooked = false }
 local BhopState = { Module = nil, Buttons = nil, Original = nil, Wrapper = nil, LastDown = false, GroundSince = nil }
+local bhopToggle, bhopModeDropdown
 
 local function crouchJump()
 	if not VirtualInputManager then return end
@@ -839,20 +957,24 @@ end)
 
 do
 	section(movePage, "Auto BunnyHop")
-	makeToggle(movePage, "Включить Auto BunnyHop", false, function(v)
+	bhopToggle = makeToggle(movePage, "Включить Auto BunnyHop", false, function(v)
 		Bhop.Enabled = v
 		if v and not Bhop.Hooked then
 			notify("BHop", "Резервный режим — хук ещё не готов")
 		end
+		Persist.queue()
 	end)
-	makeDropdown(movePage, "Режим", { "Auto", "Hold" }, "Auto", function(v) Bhop.Mode = v end)
+	bhopModeDropdown = makeDropdown(movePage, "Режим", { "Auto", "Hold" }, "Auto", function(v)
+		Bhop.Mode = v
+		Persist.queue()
+	end)
 
 	section(movePage, "Инфо")
 	makeLabel(movePage, "Auto — прыгает сам при касании земли.\nHold — только пока зажата кнопка прыжка.\nJump на колесо и стрейфы A/D держат скорость.")
 end
 
 ---------------------------------------------------------------------------
--- Вкладка Skins — скинченджер
+-- Skins: состояние и скинченджер
 ---------------------------------------------------------------------------
 local Skins = {
 	Root = nil,
@@ -1062,17 +1184,11 @@ local function InitSkinHooks()
 		Skins.Modules.Skins = skinLib
 		Skins.Modules.Viewmodel = viewmodelLib
 
-		local function knifeSubstitute()
-			if not Skins.KnifeEnabled then return nil end
-			return Skins.KnifeModel, Skins.Selections[Skins.KnifeModel] or "Vanilla"
-		end
-
 		local originalGetCameraModel = skinLib.GetCameraModel
 		Skins.Originals.GetCameraModel = originalGetCameraModel
 		skinLib.GetCameraModel = function(w, sk, ...)
 			if Skins.KnifeEnabled and w and isBaseKnife(w) then
-				local newKnife, newSkin = knifeSubstitute()
-				local ok, result = pcall(originalGetCameraModel, newKnife, newSkin, ...)
+				local ok, result = pcall(originalGetCameraModel, Skins.KnifeModel, Skins.Selections[Skins.KnifeModel] or "Vanilla", ...)
 				if ok and result then return result end
 			end
 			local ok, result = pcall(originalGetCameraModel, w, sk, ...)
@@ -1084,8 +1200,7 @@ local function InitSkinHooks()
 		Skins.Originals.GetCharacterModel = originalGetCharacterModel
 		skinLib.GetCharacterModel = function(w, sk, ...)
 			if Skins.KnifeEnabled and w and isBaseKnife(w) then
-				local newKnife, newSkin = knifeSubstitute()
-				local ok, result = pcall(originalGetCharacterModel, newKnife, newSkin, ...)
+				local ok, result = pcall(originalGetCharacterModel, Skins.KnifeModel, Skins.Selections[Skins.KnifeModel] or "Vanilla", ...)
 				if ok and result then return result end
 			end
 			local ok, result = pcall(originalGetCharacterModel, w, sk, ...)
@@ -1097,8 +1212,7 @@ local function InitSkinHooks()
 		Skins.Originals.ViewmodelNew = originalViewmodelNew
 		viewmodelLib.new = function(viewmodelClass, w, sk, ...)
 			if Skins.KnifeEnabled and w and isBaseKnife(w) then
-				local newKnife, newSkin = knifeSubstitute()
-				local ok, result = pcall(originalViewmodelNew, viewmodelClass, newKnife, newSkin, ...)
+				local ok, result = pcall(originalViewmodelNew, viewmodelClass, Skins.KnifeModel, Skins.Selections[Skins.KnifeModel] or "Vanilla", ...)
 				if ok and result then return result end
 			end
 			local ok, result = pcall(originalViewmodelNew, viewmodelClass, w, sk, ...)
@@ -1112,8 +1226,7 @@ local function InitSkinHooks()
 			skinLib.GetGloves = function(g, sk)
 				if Skins.GloveEnabled and Skins.GloveModel then
 					local model = Skins.GloveModel
-					local selection = Skins.Gloves[model] or "Default"
-					local ok, result = pcall(originalGetGloves, model, selection)
+					local ok, result = pcall(originalGetGloves, model, Skins.Gloves[model] or "Default")
 					if ok and result then return result end
 				end
 				local ok, result = pcall(originalGetGloves, g, sk)
@@ -1127,21 +1240,37 @@ local function InitSkinHooks()
 end
 
 ---------------------------------------------------------------------------
--- UI скинченджера
+-- Skins: UI (под-вкладки)
 ---------------------------------------------------------------------------
-local skinHandles, knifeHandles, gloveHandles = {}, {}, {}
+local skinHandles, knifeHandles, gloveHandles, skinRows = {}, {}, {}, {}
+local skinToggle, knifeToggle, gloveToggle, knifeModelDropdown, gloveModelDropdown
+
+skinPage.Visible = false
+local skinSubPages = makeSubTabs(Tabs.Skins.Group, { "Оружие", "Ножи", "Перчатки", "Конфиг" })
+local weaponPage = skinSubPages["Оружие"].Scroll
+local knifePage = skinSubPages["Ножи"].Scroll
+local glovePage = skinSubPages["Перчатки"].Scroll
+local configPage = skinSubPages["Конфиг"].Scroll
 
 do
-	section(skinPage, "Скины оружия")
+	section(weaponPage, "Скины оружия")
 
 	if not Skins.Root then
-		makeLabel(skinPage, "ReplicatedStorage.Assets.Skins не найден — скинченджер не активен.")
+		makeLabel(weaponPage, "ReplicatedStorage.Assets.Skins не найден — скинченджер не активен.")
 	else
-		makeToggle(skinPage, "Включить скины оружия", false, function(v)
+		skinToggle = makeToggle(weaponPage, "Включить скины оружия", false, function(v)
 			Skins.Enabled = v
 			if v then
 				task.spawn(ApplySkin)
 				notify("Skins", "Скины оружия включены")
+			end
+			Persist.queue()
+		end)
+
+		makeSearch(weaponPage, "Поиск оружия...", function(query)
+			query = query:lower()
+			for weapon, r in pairs(skinRows) do
+				r.Visible = (query == "" or weapon:lower():find(query, 1, true) ~= nil)
 			end
 		end)
 
@@ -1156,38 +1285,44 @@ do
 		for _, weapon in ipairs(weaponNames) do
 			local list = Skins.Selections[weapon]
 			Skins.Selections[weapon] = list[1]
-			skinHandles[weapon] = makeDropdown(skinPage, weapon, list, list[1], function(v)
+			local handle = makeDropdown(weaponPage, weapon, list, list[1], function(v)
 				Skins.Selections[weapon] = v
+				Persist.queue()
 			end)
+			skinHandles[weapon] = handle
+			skinRows[weapon] = handle.Row
 		end
 	end
 
-	section(skinPage, "Ножи")
+	section(knifePage, "Ножи")
 
 	if Skins.Supported then
-		makeToggle(skinPage, "Включить смену ножей", false, function(v)
+		knifeToggle = makeToggle(knifePage, "Включить смену ножей", false, function(v)
 			Skins.KnifeEnabled = v
 			UpdateInventoryNames()
 			if v then notify("Skins", "Смена ножей включена") end
+			Persist.queue()
 		end)
-		makeDropdown(skinPage, "Модель ножа", KNIFE_MODELS, Skins.KnifeModel, function(v)
+		knifeModelDropdown = makeDropdown(knifePage, "Модель ножа", KNIFE_MODELS, Skins.KnifeModel, function(v)
 			Skins.KnifeModel = v
 			UpdateInventoryNames()
+			Persist.queue()
 		end)
 		for _, knife in ipairs(KNIFE_MODELS) do
 			local list = Skins.Selections[knife]
 			if list then
 				Skins.Selections[knife] = list[1]
-				knifeHandles[knife] = makeDropdown(skinPage, "Скин: " .. knife, list, list[1], function(v)
+				knifeHandles[knife] = makeDropdown(knifePage, "Скин: " .. knife, list, list[1], function(v)
 					Skins.Selections[knife] = v
+					Persist.queue()
 				end)
 			end
 		end
 	else
-		makeLabel(skinPage, "Смена ножей недоступна на этом экзекьюторе (нужен hookfunction).")
+		makeLabel(knifePage, "Смена ножей недоступна на этом экзекьюторе (нужен hookfunction).")
 	end
 
-	section(skinPage, "Перчатки")
+	section(glovePage, "Перчатки")
 
 	if #Skins.GloveFolders > 0 then
 		local gloveModels = {}
@@ -1203,55 +1338,197 @@ do
 		table.sort(gloveModels)
 		Skins.GloveModel = gloveModels[1]
 
-		makeToggle(skinPage, "Включить смену перчаток", false, function(v)
+		gloveToggle = makeToggle(glovePage, "Включить смену перчаток", false, function(v)
 			Skins.GloveEnabled = v
 			if v then
 				task.spawn(ApplyGloves)
 				notify("Skins", "Смена перчаток включена")
 			end
+			Persist.queue()
 		end)
-		makeDropdown(skinPage, "Модель перчаток", gloveModels, gloveModels[1], function(v)
+		gloveModelDropdown = makeDropdown(glovePage, "Модель перчаток", gloveModels, gloveModels[1], function(v)
 			Skins.GloveModel = v
+			Persist.queue()
 		end)
 		for _, glove in ipairs(gloveModels) do
 			local list = Skins.GloveSelections[glove]
-			gloveHandles[glove] = makeDropdown(skinPage, "Скин: " .. glove, list, list[1], function(v)
+			gloveHandles[glove] = makeDropdown(glovePage, "Скин: " .. glove, list, list[1], function(v)
 				Skins.Gloves[glove] = v
+				Persist.queue()
 			end)
 		end
 	else
-		makeLabel(skinPage, "Папки перчаток не найдены.")
+		makeLabel(glovePage, "Папки перчаток не найдены.")
+	end
+end
+
+---------------------------------------------------------------------------
+-- Конфиг: файловая система
+---------------------------------------------------------------------------
+local CONFIG_DIR = "KittenScript/BloxStrike"
+local CONFIG_FILE = CONFIG_DIR .. "/config.json"
+local hasFs = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+local saveToken = 0
+
+local function ensureDir()
+	if type(isfolder) == "function" and type(makefolder) == "function" then
+		if not isfolder(CONFIG_DIR) then pcall(makefolder, CONFIG_DIR) end
+	end
+end
+
+local function collectConfig()
+	local selections = {}
+	for weapon, sel in pairs(Skins.Selections) do selections[weapon] = sel end
+	local gloves = {}
+	for glove, sel in pairs(Skins.Gloves) do gloves[glove] = sel end
+	return {
+		version = 1,
+		skins = {
+			enabled = Skins.Enabled,
+			knifeEnabled = Skins.KnifeEnabled,
+			knifeModel = Skins.KnifeModel,
+			gloveEnabled = Skins.GloveEnabled,
+			gloveModel = Skins.GloveModel,
+			selections = selections,
+			gloves = gloves,
+		},
+		settings = {
+			fovEnabled = Fov.Enabled,
+			fovValue = Fov.Value,
+			bhopEnabled = Bhop.Enabled,
+			bhopMode = Bhop.Mode,
+		},
+	}
+end
+
+local function saveConfig(silent)
+	if not hasFs then
+		if not silent then notify("Config", "Экзекьютор без writefile") end
+		return false
+	end
+	local ok, encoded = pcall(function() return HttpService:JSONEncode(collectConfig()) end)
+	if not ok or not encoded then return false end
+	ensureDir()
+	local wrote = pcall(writefile, CONFIG_FILE, encoded)
+	if wrote and not silent then notify("Config", "Конфиг сохранён") end
+	return wrote
+end
+
+local function applyConfig(data)
+	if type(data) ~= "table" then return end
+	local s = data.skins or {}
+
+	for weapon, sel in pairs(s.selections or {}) do
+		if Skins.Selections[weapon] then
+			Skins.Selections[weapon] = sel
+			local handle = skinHandles[weapon] or knifeHandles[weapon]
+			if handle then pcall(function() handle:Set(sel) end) end
+		end
+	end
+	for glove, sel in pairs(s.gloves or {}) do
+		if Skins.Gloves[glove] then
+			Skins.Gloves[glove] = sel
+			local handle = gloveHandles[glove]
+			if handle then pcall(function() handle:Set(sel) end) end
+		end
 	end
 
-	section(skinPage, "Конфиг")
+	if s.knifeModel and table.find(KNIFE_MODELS, s.knifeModel) then
+		Skins.KnifeModel = s.knifeModel
+		if knifeModelDropdown then pcall(function() knifeModelDropdown:Set(s.knifeModel) end) end
+	end
+	if s.gloveModel and Skins.Gloves[s.gloveModel] and gloveModelDropdown then
+		Skins.GloveModel = s.gloveModel
+		pcall(function() gloveModelDropdown:Set(s.gloveModel) end)
+	end
 
-	makeButton(skinPage, "Force Apply Now", function()
-		pcall(ApplySkin)
-		pcall(ApplyGloves)
-		notify("Skins", "Скины применены принудительно")
+	if skinToggle then skinToggle:Set(s.enabled == true) end
+	if knifeToggle then knifeToggle:Set(s.knifeEnabled == true) end
+	if gloveToggle then gloveToggle:Set(s.gloveEnabled == true) end
+
+	local st = data.settings or {}
+	if st.fovValue and fovSlider then fovSlider:Set(st.fovValue) end
+	if fovToggle then fovToggle:Set(st.fovEnabled == true) end
+	if st.bhopMode and bhopModeDropdown then bhopModeDropdown:Set(st.bhopMode) end
+	if bhopToggle then bhopToggle:Set(st.bhopEnabled == true) end
+
+	UpdateInventoryNames()
+	task.spawn(ApplySkin)
+	task.spawn(ApplyGloves)
+end
+
+Persist.queue = function()
+	if not (hasFs and Persist.autosave) then return end
+	saveToken = saveToken + 1
+	local token = saveToken
+	task.delay(0.6, function()
+		if token == saveToken then pcall(saveConfig, true) end
 	end)
+end
 
-	makeButton(skinPage, "Reset All Skins", function()
-		for weapon, list in pairs(Skins.Selections) do
-			local first = (type(list) == "table") and list[1] or list
-			if first then
-				Skins.Selections[weapon] = first
-				local handle = skinHandles[weapon] or knifeHandles[weapon]
-				if handle then pcall(function() handle:Set(first) end) end
-			end
-		end
-		for glove, list in pairs(Skins.GloveSelections) do
-			Skins.Gloves[glove] = "Default"
-			local handle = gloveHandles[glove]
-			if handle then pcall(function() handle:Set("Default") end) end
-			pcall(function() handle:Set(list[1] or "Default") end)
-		end
-		pcall(ApplySkin)
-		pcall(ApplyGloves)
-		notify("Skins", "Все скины сброшены")
-	end)
+local function loadConfig(silent)
+	if not hasFs then
+		if not silent then notify("Config", "Экзекьютор без readfile") end
+		return false
+	end
+	if not isfile(CONFIG_FILE) then
+		if not silent then notify("Config", "Файл конфига не найден") end
+		return false
+	end
+	local ok, raw = pcall(readfile, CONFIG_FILE)
+	if not ok or not raw or raw == "" then return false end
+	local decodedOk, data = pcall(function() return HttpService:JSONDecode(raw) end)
+	if not decodedOk or type(data) ~= "table" then
+		if not silent then notify("Config", "Конфиг повреждён") end
+		return false
+	end
+	applyConfig(data)
+	if not silent then notify("Config", "Конфиг загружен") end
+	return true
+end
 
-	makeLabel(skinPage, "Скины накатываются на текущий вьюмодель каждые 0.5 с. Ножи подменяются на уровне модуля Viewmodel, поэтому чужая модель видна сразу после перезахода в бой.")
+local function resetConfig()
+	for weapon, list in pairs(Skins.Selections) do
+		local first = (type(list) == "table") and list[1] or list
+		if first then
+			Skins.Selections[weapon] = first
+			local handle = skinHandles[weapon] or knifeHandles[weapon]
+			if handle then pcall(function() handle:Set(first) end) end
+		end
+	end
+	for glove, list in pairs(Skins.GloveSelections) do
+		Skins.Gloves[glove] = "Default"
+		local handle = gloveHandles[glove]
+		if handle then pcall(function() handle:Set(list[1] or "Default") end) end
+	end
+	if skinToggle then skinToggle:Set(false) end
+	if knifeToggle then knifeToggle:Set(false) end
+	if gloveToggle then gloveToggle:Set(false) end
+	pcall(ApplySkin)
+	pcall(ApplyGloves)
+	Persist.queue()
+	notify("Config", "Настройки сброшены")
+end
+
+do
+	section(configPage, "Сохранение")
+
+	if hasFs then
+		makeButton(configPage, "Save Config", function() saveConfig(false) end)
+		makeButton(configPage, "Load Config", function() loadConfig(false) end)
+		makeButton(configPage, "Reset All Skins", resetConfig)
+		makeToggle(configPage, "Автосохранение", true, function(v)
+			Persist.autosave = v
+			if v then Persist.queue() end
+		end)
+		makeLabel(configPage, "Файл: " .. CONFIG_FILE .. "\nСкины, нож, перчатки, FOV и BHop пишутся автоматически при изменении.")
+	else
+		makeLabel(configPage, "Экзекьютор без файловых функций — сохранение недоступно.")
+		makeButton(configPage, "Reset All Skins", resetConfig)
+	end
+
+	section(configPage, "Инфо")
+	makeLabel(configPage, "Скины накатываются на вьюмодель каждые 0.5 с. Нож подменяется на уровне модуля Viewmodel, поэтому чужая модель видна сразу после респавна.")
 end
 
 task.spawn(function()
@@ -1298,9 +1575,18 @@ bind(UserInputService.InputBegan, function(input, processed)
 end)
 
 ---------------------------------------------------------------------------
+-- Автозагрузка конфига
+---------------------------------------------------------------------------
+task.defer(function()
+	task.wait(0.4)
+	pcall(loadConfig, true)
+end)
+
+---------------------------------------------------------------------------
 -- Unload
 ---------------------------------------------------------------------------
 function gui:Unload()
+	pcall(saveConfig, true)
 	if BhopState.Module and BhopState.Module.SampleInput == BhopState.Wrapper then
 		BhopState.Module.SampleInput = BhopState.Original
 	end
