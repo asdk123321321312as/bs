@@ -1,4 +1,7 @@
-
+--[[  KittenScript for Blox Strike
+      Camera FOV · Auto BunnyHop · SkinChanger
+      Toggle menu: RightShift
+]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -653,7 +656,7 @@ local function makeDropdown(parent, text, options, default, callback)
 				TextSize = 11,
 				TextColor3 = option == value and C.AccentDeep or C.Text,
 				TextXAlignment = Enum.TextXAlignment.Left,
-				Text = "   " .. option,
+				Text = "   " .. tostring(option),
 				ZIndex = 61,
 			}, list)
 			corner(b, 7)
@@ -663,7 +666,7 @@ local function makeDropdown(parent, text, options, default, callback)
 			end)
 			b.MouseButton1Click:Connect(function()
 				value = option
-				label.Text = option
+				label.Text = tostring(option)
 				callback(option)
 				close()
 			end)
@@ -672,6 +675,7 @@ local function makeDropdown(parent, text, options, default, callback)
 
 	return {
 		Set = function(v)
+			if type(v) == "table" then v = v[1] end
 			if type(v) ~= "string" then v = tostring(v) end
 			value = v
 			label.Text = v
@@ -978,7 +982,8 @@ end
 ---------------------------------------------------------------------------
 local Skins = {
 	Root = nil,
-	Selections = {},
+	Lists = {},          -- name -> { скины }   (статические списки)
+	Selections = {},     -- name -> выбранный скин (только строки)
 	GloveSelections = {},
 	GloveFolders = {},
 	Enabled = false,
@@ -1015,7 +1020,9 @@ if Skins.Root then
 				list[#list + 1] = skinFolder.Name
 			end
 			table.sort(list)
-			Skins.Selections[weaponFolder.Name] = (#list > 0) and list or { "Default" }
+			if #list == 0 then list = { "Default" } end
+			Skins.Lists[weaponFolder.Name] = list
+			Skins.Selections[weaponFolder.Name] = list[1]
 		end
 		for _, folder in ipairs(Skins.Root:GetChildren()) do
 			local n = folder.Name
@@ -1065,7 +1072,7 @@ local function UpdateInventoryNames()
 	local model = Skins.KnifeModel
 	local sel = Skins.Selections[model]
 	local star = utf8.char(9733)
-	if sel and sel ~= "Default" then
+	if type(sel) == "string" and sel ~= "Default" then
 		weaponName.Text = star .. " " .. model .. " | " .. sel
 	else
 		weaponName.Text = star .. " " .. model
@@ -1100,7 +1107,7 @@ local function ApplySkin()
 	end
 	if not allowed then return end
 	local selection = Skins.Selections[target]
-	if not selection or selection == "Default" then return end
+	if type(selection) ~= "string" or selection == "Default" then return end
 	local weaponFolder = Skins.Root:FindFirstChild(target)
 	if not weaponFolder then return end
 	local skinFolder = weaponFolder:FindFirstChild(selection)
@@ -1149,7 +1156,7 @@ local function ApplyGloves()
 	local model = Skins.GloveModel
 	if not model then return end
 	local selection = Skins.Gloves[model]
-	if not selection or selection == "Default" then return end
+	if type(selection) ~= "string" or selection == "Default" then return end
 	local gloveFolder = Skins.Root:FindFirstChild(model)
 	if not gloveFolder then return end
 	local variant = gloveFolder:FindFirstChild(selection)
@@ -1275,7 +1282,7 @@ do
 		end)
 
 		local weaponNames = {}
-		for weapon in pairs(Skins.Selections) do
+		for weapon in pairs(Skins.Lists) do
 			if not table.find(KNIFE_MODELS, weapon) and not table.find(EXTRA_GLOVES, weapon) then
 				weaponNames[#weaponNames + 1] = weapon
 			end
@@ -1283,9 +1290,11 @@ do
 		table.sort(weaponNames)
 
 		for _, weapon in ipairs(weaponNames) do
-			local list = Skins.Selections[weapon]
-			Skins.Selections[weapon] = list[1]
-			local handle = makeDropdown(weaponPage, weapon, list, list[1], function(v)
+			local list = Skins.Lists[weapon]
+			local current = Skins.Selections[weapon]
+			if type(current) ~= "string" then current = list[1] end
+			Skins.Selections[weapon] = current
+			local handle = makeDropdown(weaponPage, weapon, list, current, function(v)
 				Skins.Selections[weapon] = v
 				Persist.queue()
 			end)
@@ -1309,10 +1318,12 @@ do
 			Persist.queue()
 		end)
 		for _, knife in ipairs(KNIFE_MODELS) do
-			local list = Skins.Selections[knife]
+			local list = Skins.Lists[knife]
 			if list then
-				Skins.Selections[knife] = list[1]
-				knifeHandles[knife] = makeDropdown(knifePage, "Скин: " .. knife, list, list[1], function(v)
+				local current = Skins.Selections[knife]
+				if type(current) ~= "string" then current = list[1] end
+				Skins.Selections[knife] = current
+				knifeHandles[knife] = makeDropdown(knifePage, "Скин: " .. knife, list, current, function(v)
 					Skins.Selections[knife] = v
 					Persist.queue()
 				end)
@@ -1378,11 +1389,15 @@ end
 
 local function collectConfig()
 	local selections = {}
-	for weapon, sel in pairs(Skins.Selections) do selections[weapon] = sel end
+	for weapon, sel in pairs(Skins.Selections) do
+		if type(sel) == "string" then selections[weapon] = sel end
+	end
 	local gloves = {}
-	for glove, sel in pairs(Skins.Gloves) do gloves[glove] = sel end
+	for glove, sel in pairs(Skins.Gloves) do
+		if type(sel) == "string" then gloves[glove] = sel end
+	end
 	return {
-		version = 1,
+		version = 2,
 		skins = {
 			enabled = Skins.Enabled,
 			knifeEnabled = Skins.KnifeEnabled,
@@ -1414,30 +1429,46 @@ local function saveConfig(silent)
 	return wrote
 end
 
+-- принимает и строку, и (для старых конфигов) массив — берёт первый элемент
+local function coerceSkin(value, list)
+	if type(value) == "table" then value = value[1] end
+	if type(value) ~= "string" then return nil end
+	if list and not table.find(list, value) then return nil end
+	return value
+end
+
 local function applyConfig(data)
 	if type(data) ~= "table" then return end
 	local s = data.skins or {}
 
-	for weapon, sel in pairs(s.selections or {}) do
-		if Skins.Selections[weapon] then
-			Skins.Selections[weapon] = sel
-			local handle = skinHandles[weapon] or knifeHandles[weapon]
-			if handle then pcall(function() handle:Set(sel) end) end
+	for weapon, raw in pairs(s.selections or {}) do
+		local list = Skins.Lists[weapon]
+		if list then
+			local sel = coerceSkin(raw, list)
+			if sel then
+				Skins.Selections[weapon] = sel
+				local handle = skinHandles[weapon] or knifeHandles[weapon]
+				if handle then pcall(function() handle:Set(sel) end) end
+			end
 		end
 	end
-	for glove, sel in pairs(s.gloves or {}) do
-		if Skins.Gloves[glove] then
-			Skins.Gloves[glove] = sel
-			local handle = gloveHandles[glove]
-			if handle then pcall(function() handle:Set(sel) end) end
+	for glove, raw in pairs(s.gloves or {}) do
+		local list = Skins.GloveSelections[glove]
+		if list then
+			local sel = coerceSkin(raw, list)
+			if sel then
+				Skins.Gloves[glove] = sel
+				local handle = gloveHandles[glove]
+				if handle then pcall(function() handle:Set(sel) end) end
+			end
 		end
 	end
 
-	if s.knifeModel and table.find(KNIFE_MODELS, s.knifeModel) then
+	if type(s.knifeModel) == "string" and table.find(KNIFE_MODELS, s.knifeModel) then
 		Skins.KnifeModel = s.knifeModel
 		if knifeModelDropdown then pcall(function() knifeModelDropdown:Set(s.knifeModel) end) end
 	end
-	if s.gloveModel and Skins.Gloves[s.gloveModel] and gloveModelDropdown then
+	if type(s.gloveModel) == "string" and Skins.Gloves[s.gloveModel] and gloveModelDropdown then
 		Skins.GloveModel = s.gloveModel
 		pcall(function() gloveModelDropdown:Set(s.gloveModel) end)
 	end
@@ -1447,9 +1478,9 @@ local function applyConfig(data)
 	if gloveToggle then gloveToggle:Set(s.gloveEnabled == true) end
 
 	local st = data.settings or {}
-	if st.fovValue and fovSlider then fovSlider:Set(st.fovValue) end
+	if type(st.fovValue) == "number" and fovSlider then fovSlider:Set(st.fovValue) end
 	if fovToggle then fovToggle:Set(st.fovEnabled == true) end
-	if st.bhopMode and bhopModeDropdown then bhopModeDropdown:Set(st.bhopMode) end
+	if type(st.bhopMode) == "string" and bhopModeDropdown then bhopModeDropdown:Set(st.bhopMode) end
 	if bhopToggle then bhopToggle:Set(st.bhopEnabled == true) end
 
 	UpdateInventoryNames()
@@ -1488,8 +1519,8 @@ local function loadConfig(silent)
 end
 
 local function resetConfig()
-	for weapon, list in pairs(Skins.Selections) do
-		local first = (type(list) == "table") and list[1] or list
+	for weapon, list in pairs(Skins.Lists) do
+		local first = list[1]
 		if first then
 			Skins.Selections[weapon] = first
 			local handle = skinHandles[weapon] or knifeHandles[weapon]
@@ -1499,7 +1530,7 @@ local function resetConfig()
 	for glove, list in pairs(Skins.GloveSelections) do
 		Skins.Gloves[glove] = "Default"
 		local handle = gloveHandles[glove]
-		if handle then pcall(function() handle:Set(list[1] or "Default") end) end
+		if handle then pcall(function() handle:Set("Default") end) end
 	end
 	if skinToggle then skinToggle:Set(false) end
 	if knifeToggle then knifeToggle:Set(false) end
