@@ -1,5 +1,5 @@
 --[[  KittenScript for Blox Strike
-      Camera FOV · Auto BunnyHop · SkinChanger
+      Camera FOV · Auto BunnyHop · ESP · SkinChanger
       Toggle menu: RightShift
 ]]
 
@@ -73,7 +73,6 @@ local function stroke(obj, color, thickness, trans)
 	}, obj)
 end
 
--- заглушка очереди автосейва, реальная функция подставится позже
 local Persist = { autosave = true, queue = function() end }
 
 ---------------------------------------------------------------------------
@@ -404,6 +403,7 @@ end
 
 local visualPage = addTab("Visuals", "◈")
 local movePage = addTab("Movement", "⇅")
+local espPage = addTab("ESP", "◉")
 local skinPage = addTab("Skins", "✦")
 
 ---------------------------------------------------------------------------
@@ -742,6 +742,105 @@ local function makeSearch(parent, placeholder, onChanged)
 	return box
 end
 
+local function makeColor(parent, text, default, callback)
+	local r = row(parent, 38)
+	create("TextLabel", {
+		Position = UDim2.fromOffset(14, 0),
+		Size = UDim2.new(1, -70, 1, 0),
+		BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 12,
+		TextColor3 = C.Text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = text,
+	}, r)
+	local swatch = create("Frame", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -13, 0.5, 0),
+		Size = UDim2.fromOffset(40, 20),
+		BackgroundColor3 = default,
+		BorderSizePixel = 0,
+	}, r)
+	corner(swatch, 6)
+	stroke(swatch, C.Stroke, 1, 0.4)
+
+	local clickable = create("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "" }, r)
+	local value = default
+	local popup, open = nil, false
+	local rSlider, gSlider, bSlider
+
+	local function close()
+		if not open then return end
+		open = false
+		for i, p in ipairs(openPopups) do
+			if p == popup then table.remove(openPopups, i) break end
+		end
+		local p = popup
+		popup = nil
+		rSlider, gSlider, bSlider = nil, nil, nil
+		pcall(function() p:Destroy() end)
+	end
+
+	local function commit(col)
+		value = col
+		swatch.BackgroundColor3 = col
+		callback(col)
+	end
+
+	clickable.MouseButton1Click:Connect(function()
+		if open then close() return end
+		for _, p in ipairs(table.clone(openPopups)) do pcall(function() p:Destroy() end) end
+		table.clear(openPopups)
+		open = true
+		local pos = r.AbsolutePosition - main.AbsolutePosition
+		local width = 210
+		local x = math.clamp(pos.X, 8, math.max(8, main.AbsoluteSize.X - width - 8))
+		local popupH = 178
+		local y = pos.Y + r.AbsoluteSize.Y + 5
+		if y + popupH > main.AbsoluteSize.Y - 8 then
+			y = math.max(8, pos.Y - popupH - 5)
+		end
+		popup = create("Frame", {
+			Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(width, popupH),
+			BackgroundColor3 = C.White,
+			ZIndex = 60,
+		}, main)
+		corner(popup, 12)
+		stroke(popup, C.Stroke, 1, 0.15)
+		table.insert(openPopups, popup)
+		create("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, popup)
+		create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, popup)
+
+		local function chan(letter, index)
+			local current = ({ value.R, value.G, value.B })[index] * 255
+			return makeSlider(popup, letter, 0, 255, math.floor(current + 0.5), "", function(v)
+				local c = Color3.new(value.R, value.G, value.B)
+				if index == 1 then c = Color3.fromRGB(v, math.floor(value.G * 255), math.floor(value.B * 255))
+				elseif index == 2 then c = Color3.fromRGB(math.floor(value.R * 255), v, math.floor(value.B * 255))
+				else c = Color3.fromRGB(math.floor(value.R * 255), math.floor(value.G * 255), v) end
+				commit(c)
+			end)
+		end
+		rSlider = chan("R", 1)
+		gSlider = chan("G", 2)
+		bSlider = chan("B", 3)
+	end)
+
+	return {
+		Get = function() return value end,
+		Set = function(col)
+			if typeof(col) ~= "Color3" then return end
+			value = col
+			swatch.BackgroundColor3 = col
+			if rSlider then pcall(function() rSlider:Set(col.R * 255) end) end
+			if gSlider then pcall(function() gSlider:Set(col.G * 255) end) end
+			if bSlider then pcall(function() bSlider:Set(col.B * 255) end) end
+			callback(col)
+		end,
+	}
+end
+
 ---------------------------------------------------------------------------
 -- Под-вкладки (для разбиения Skins)
 ---------------------------------------------------------------------------
@@ -832,18 +931,33 @@ local function makeSubTabs(host, names)
 end
 
 ---------------------------------------------------------------------------
--- Вкладка Visuals (FOV)
+-- Вкладка Visuals (FOV) — не мешает оптике
 ---------------------------------------------------------------------------
 local Fov = { Enabled = false, Value = 90, Original = nil }
 local fovToggle, fovSlider
+local scopeRef = nil
+
+local function isScoped()
+	local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+	if not playerGui then return false end
+	if scopeRef and scopeRef.Parent then
+		return scopeRef.Visible == true
+	end
+	local ok, scope = pcall(function() return playerGui.MainGui.Gameplay.Middle.SniperScope end)
+	if ok and scope then
+		scopeRef = scope
+		return scope.Visible == true
+	end
+	return false
+end
 
 do
 	section(visualPage, "Камера")
 	fovToggle = makeToggle(visualPage, "Включить FOV", false, function(v)
 		Fov.Enabled = v
 		local camera = workspace.CurrentCamera
-		if v and camera then
-			Fov.Original = camera.FieldOfView
+		if v then
+			if camera and not isScoped() then Fov.Original = camera.FieldOfView end
 		elseif camera and Fov.Original then
 			camera.FieldOfView = Fov.Original
 		end
@@ -853,10 +967,14 @@ do
 		Fov.Value = v
 		Persist.queue()
 	end)
+	makeLabel(visualPage, "При взгляде в оптику FOV отдаётся игре — зум AWP и снайперок работает как обычно.")
 
 	bind(RunService.RenderStepped, function()
 		local camera = workspace.CurrentCamera
-		if Fov.Enabled and camera and math.abs(camera.FieldOfView - Fov.Value) > 0.05 then
+		if not (Fov.Enabled and camera) then return end
+		if isScoped() then return end
+		if Fov.Original == nil then Fov.Original = camera.FieldOfView end
+		if math.abs(camera.FieldOfView - Fov.Value) > 0.05 then
 			camera.FieldOfView = Fov.Value
 		end
 	end)
@@ -990,12 +1108,879 @@ do
 end
 
 ---------------------------------------------------------------------------
+-- ESP: конфиг
+---------------------------------------------------------------------------
+local ESP = {
+	Enabled = false,
+	TeamCheck = true,
+	Box = {
+		Enabled = false, Type = "2D",
+		ColorA = Color3.fromRGB(255, 255, 255), ColorB = Color3.fromRGB(0, 200, 255),
+		FillGradient = false,
+		FillA = Color3.fromRGB(255, 50, 50), FillB = Color3.fromRGB(50, 50, 255),
+		FillRotation = false, RotationSpeed = 2,
+	},
+	Health = { Enabled = false, Top = Color3.fromRGB(0, 255, 0), Bottom = Color3.fromRGB(255, 0, 0) },
+	HealthText = { Enabled = false, Color = Color3.new(1, 1, 1), Size = 12 },
+	Name = { Enabled = false, Color = Color3.new(1, 1, 1), Size = 13 },
+	Distance = { Enabled = false, Color = Color3.new(1, 1, 1), Size = 13 },
+	Weapon = { Enabled = false, Color = Color3.new(1, 1, 1), Size = 13 },
+	Tracer = { Enabled = false, ColorA = Color3.new(1, 1, 1), ColorB = Color3.fromRGB(255, 0, 128), From = "Bottom" },
+	Skeleton = { Enabled = false, ColorA = Color3.new(1, 1, 1), ColorB = Color3.fromRGB(0, 255, 255), Thickness = 2 },
+	Circle = { Enabled = false, Color = Color3.fromRGB(255, 200, 0) },
+}
+
+local espObjects = {}
+local espCharacters = {}
+local rotAngle = 0
+
+local abs, huge, floor, clamp, sin, cos, pi, pi2 = math.abs, math.huge, math.floor, math.clamp, math.sin, math.cos, math.pi, math.pi * 2
+local lerpColor = function(a, b, t)
+	return Color3.new(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t)
+end
+
+local SKELETON_R6 = { { "Head", "Torso" }, { "Torso", "Left Arm" }, { "Torso", "Right Arm" }, { "Torso", "Left Leg" }, { "Torso", "Right Leg" } }
+local SKELETON_R15 = {
+	{ "Head", "UpperTorso" }, { "UpperTorso", "LowerTorso" },
+	{ "UpperTorso", "LeftUpperArm" }, { "LeftUpperArm", "LeftLowerArm" }, { "LeftLowerArm", "LeftHand" },
+	{ "UpperTorso", "RightUpperArm" }, { "RightUpperArm", "RightLowerArm" }, { "RightLowerArm", "RightHand" },
+	{ "LowerTorso", "LeftUpperLeg" }, { "LeftUpperLeg", "LeftLowerLeg" }, { "LeftLowerLeg", "LeftFoot" },
+	{ "LowerTorso", "RightUpperLeg" }, { "RightUpperLeg", "RightLowerLeg" }, { "RightLowerLeg", "RightFoot" },
+}
+local AABB_CORNER_SIGNS = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 0, 0, 1 }, { 1, 0, 1 }, { 0, 1, 1 }, { 1, 1, 1 } }
+local BOX_3D_EDGES = { { 1, 2 }, { 2, 4 }, { 4, 3 }, { 3, 1 }, { 5, 6 }, { 6, 8 }, { 8, 7 }, { 7, 5 }, { 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 } }
+
+local BASE_DIST, BASE_W, BASE_H = 20, 86, 155
+local MAX_FILL_LINES = 400
+local MAX_HP_SEGMENTS = 12
+local GRAD_STEPS = 4
+
+local partHalfExtentCache = setmetatable({}, { __mode = "k" })
+
+local function get_part_half_extent(part)
+	local cached = partHalfExtentCache[part]
+	if not cached then
+		local s = part.Size
+		cached = { hx = s.X * 0.5, hy = s.Y * 0.5, hz = s.Z * 0.5 }
+		partHalfExtentCache[part] = cached
+	end
+	return cached.hx, cached.hy, cached.hz
+end
+
+local function compute_world_aabb(parts)
+	local x0, y0, z0 = huge, huge, huge
+	local x1, y1, z1 = -huge, -huge, -huge
+	for i = 1, #parts do
+		local p = parts[i]
+		local hx, hy, hz = get_part_half_extent(p)
+		local px, py, pz, r00, r01, r02, r10, r11, r12, r20, r21, r22 = p.CFrame:GetComponents()
+		local ex = abs(r00) * hx + abs(r01) * hy + abs(r02) * hz
+		local ey = abs(r10) * hx + abs(r11) * hy + abs(r12) * hz
+		local ez = abs(r20) * hx + abs(r21) * hy + abs(r22) * hz
+		if px - ex < x0 then x0 = px - ex end
+		if py - ey < y0 then y0 = py - ey end
+		if pz - ez < z0 then z0 = pz - ez end
+		if px + ex > x1 then x1 = px + ex end
+		if py + ey > y1 then y1 = py + ey end
+		if pz + ez > z1 then z1 = pz + ez end
+	end
+	if x0 == huge then return nil end
+	return x0, y0, z0, x1, y1, z1
+end
+
+local function project_fixed_box(x0, y0, z0, x1, y1, z1)
+	local camera = workspace.CurrentCamera
+	if not camera then return nil, nil, false end
+	local cx, cy, cz = (x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5
+	local sp, vis = camera:WorldToViewportPoint(Vector3.new(cx, cy, cz))
+	if not vis and sp.Z <= 0 then return nil, nil, false end
+	local depth = sp.Z
+	if depth <= 0 then depth = 0.1 end
+	local scale = BASE_DIST / depth
+	local w = BASE_W * scale
+	local h = BASE_H * scale
+	local sx, sy = sp.X, sp.Y
+	return Vector2.new(sx - w * 0.5, sy - h * 0.5), Vector2.new(sx + w * 0.5, sy + h * 0.5), true
+end
+
+local function project_aabb_corners_3d(x0, y0, z0, x1, y1, z1)
+	local camera = workspace.CurrentCamera
+	if not camera then return nil, false end
+	local screen, on = {}, false
+	for i = 1, 8 do
+		local s = AABB_CORNER_SIGNS[i]
+		local wx = (s[1] == 0) and x0 or x1
+		local wy = (s[2] == 0) and y0 or y1
+		local wz = (s[3] == 0) and z0 or z1
+		local pos, vis = camera:WorldToViewportPoint(Vector3.new(wx, wy, wz))
+		screen[i] = Vector2.new(pos.X, pos.Y)
+		if vis then on = true end
+	end
+	return screen, on
+end
+
+local function ensure_character_parts(instance, data)
+	if data.partlist then return data.partlist end
+	local list, index = {}, setmetatable({}, { __mode = "k" })
+	local function add(p)
+		if p:IsA("BasePart") and not index[p] then
+			list[#list + 1] = p
+			index[p] = #list
+			local c = p:GetPropertyChangedSignal("Size"):Connect(function()
+				partHalfExtentCache[p] = nil
+			end)
+			data.sizeConns = data.sizeConns or {}
+			data.sizeConns[p] = c
+		end
+	end
+	local function rem(p)
+		local i = index[p]
+		if not i then return end
+		local last = #list
+		local lp = list[last]
+		list[i] = lp
+		index[lp] = i
+		list[last] = nil
+		index[p] = nil
+		if data.sizeConns and data.sizeConns[p] then
+			data.sizeConns[p]:Disconnect()
+			data.sizeConns[p] = nil
+		end
+	end
+	if instance:IsA("Model") then
+		for _, p in next, instance:GetDescendants() do add(p) end
+		data.partConnAdd = instance.DescendantAdded:Connect(add)
+		data.partConnRemove = instance.DescendantRemoving:Connect(rem)
+	elseif instance:IsA("BasePart") then
+		add(instance)
+	end
+	data.partlist = list
+	return list
+end
+
+local function setupFillLines()
+	local lines = {}
+	for i = 1, MAX_FILL_LINES do
+		local l = Drawing.new("Line")
+		l.Thickness = 4
+		l.Transparency = 0.3
+		l.Visible = false
+		lines[i] = l
+	end
+	return lines
+end
+
+local function drawFillGradient360(fillLines, x, y, w, h, colorA, colorB, angle)
+	local dx, dy = cos(angle), sin(angle)
+	local cx, cy = x + w * 0.5, y + h * 0.5
+	local maxDot = math.max((abs(dx) * w + abs(dy) * h) * 0.5, 1)
+	local targetRows = clamp(floor(h * 0.8), 15, MAX_FILL_LINES)
+	local rowH = h / targetRows
+	for i = 1, targetRows do
+		local py = y + (i - 0.5) * rowH
+		local dotL = ((x - cx) * dx + (py - cy) * dy) / maxDot
+		local dotR = ((x + w - cx) * dx + (py - cy) * dy) / maxDot
+		local tL = clamp(dotL * 0.5 + 0.5, 0, 1)
+		local tR = clamp(dotR * 0.5 + 0.5, 0, 1)
+		local line = fillLines[i]
+		line.Color = lerpColor(colorA, colorB, (tL + tR) * 0.5)
+		line.Thickness = clamp(rowH + 1.5, 2, 8)
+		line.From = Vector2.new(x + 1, py)
+		line.To = Vector2.new(x + w - 1, py)
+		line.Visible = true
+	end
+	for i = targetRows + 1, #fillLines do fillLines[i].Visible = false end
+end
+
+local function drawBoxOutlineGradient(box, x, y, w, h, colorA, colorB, rotOff)
+	local idx = 0
+	local sides = { { x, y, x + w, y }, { x + w, y, x + w, y + h }, { x + w, y + h, x, y + h }, { x, y + h, x, y } }
+	for si = 1, 4 do
+		local s = sides[si]
+		for step = 0, GRAD_STEPS - 1 do
+			idx = idx + 1
+			local tA, tB = step / GRAD_STEPS, (step + 1) / GRAD_STEPS
+			local tMid = (((si - 1) / 4) + (tA / 4) + rotOff) % 1
+			local line = box.grad_lines[idx]
+			if line then
+				line.From = Vector2.new(s[1] + (s[3] - s[1]) * tA, s[2] + (s[4] - s[2]) * tA)
+				line.To = Vector2.new(s[1] + (s[3] - s[1]) * tB, s[2] + (s[4] - s[2]) * tB)
+				line.Color = lerpColor(colorA, colorB, tMid)
+				line.Visible = true
+			end
+		end
+	end
+	for i = idx + 1, #box.grad_lines do box.grad_lines[i].Visible = false end
+end
+
+local function hideBox(box)
+	box.outline.Visible = false
+	box.fill.Visible = false
+	for _, l in ipairs(box.grad_lines) do l.Visible = false end
+	for _, l in ipairs(box.fill_grad_lines) do l.Visible = false end
+	for _, l in ipairs(box.corner_fill) do l.Visible = false end
+	for _, l in ipairs(box.corner_outline) do l.Visible = false end
+	for _, l in ipairs(box.box_3d_lines) do l.Visible = false end
+end
+
+local function mkLine(th)
+	local l = Drawing.new("Line")
+	l.Thickness = th
+	l.Transparency = 1
+	l.Visible = false
+	return l
+end
+
+local function mkSq(th, filled)
+	local s = Drawing.new("Square")
+	s.Thickness = th
+	s.Filled = filled
+	s.Transparency = 1
+	s.Visible = false
+	return s
+end
+
+local function addESPObjects(instance)
+	if espObjects[instance] then return end
+	local data = {}
+
+	data.box = {
+		outline = mkSq(3, false), fill = mkSq(1, false),
+		grad_lines = {}, fill_grad_lines = setupFillLines(),
+		corner_fill = {}, corner_outline = {}, box_3d_lines = {},
+	}
+	for i = 1, 16 do data.box.grad_lines[i] = mkLine(1) end
+	for i = 1, 8 do
+		data.box.corner_fill[i] = mkLine(1)
+		data.box.corner_outline[i] = mkLine(3)
+	end
+	for i = 1, 12 do data.box.box_3d_lines[i] = mkLine(2) end
+
+	data.healthbar = { background = mkSq(1, true), segments = {} }
+	data.healthbar.background.Color = Color3.new(0, 0, 0)
+	data.healthbar.background.Transparency = 0.5
+	for i = 1, MAX_HP_SEGMENTS do data.healthbar.segments[i] = mkLine(3) end
+
+	data.healthtext = Drawing.new("Text")
+	data.healthtext.Center = false
+	data.healthtext.Outline = true
+	data.healthtext.Font = 1
+	data.healthtext.Transparency = 1
+	data.healthtext.Visible = false
+
+	data.name = Drawing.new("Text")
+	data.name.Center = true
+	data.name.Outline = true
+	data.name.Font = 1
+	data.name.Transparency = 1
+	data.name.Visible = false
+
+	data.distance = Drawing.new("Text")
+	data.distance.Center = true
+	data.distance.Outline = true
+	data.distance.Font = 1
+	data.distance.Transparency = 1
+	data.distance.Visible = false
+
+	data.tracer = { outline = mkLine(3), fill = mkLine(1) }
+
+	local isR15 = instance:FindFirstChild("UpperTorso") ~= nil
+	local bones = isR15 and SKELETON_R15 or SKELETON_R6
+	data.skeleton = { lines = {}, bone_parts = {}, screenCache = {} }
+	for i = 1, #bones do
+		data.skeleton.lines[i] = mkLine(2)
+		data.skeleton.bone_parts[i] = { instance:FindFirstChild(bones[i][1]), instance:FindFirstChild(bones[i][2]) }
+	end
+
+	data.weapon = Drawing.new("Text")
+	data.weapon.Center = true
+	data.weapon.Outline = true
+	data.weapon.Font = 1
+	data.weapon.Transparency = 1
+	data.weapon.Visible = false
+
+	data.circle = { lines = {}, trail = {}, glow = {}, alpha = 0, up = true, history = {}, segments = 32 }
+	for i = 1, 32 do data.circle.lines[i] = mkLine(1.5) end
+	for i = 1, 25 do
+		data.circle.trail[i] = mkLine(2.5)
+		data.circle.trail[i].Transparency = 0.4
+		data.circle.glow[i] = mkLine(5)
+		data.circle.glow[i].Transparency = 0.15
+	end
+
+	espObjects[instance] = data
+end
+
+local function removeESPObjects(instance)
+	local data = espObjects[instance]
+	if not data then return end
+	espObjects[instance] = nil
+	pcall(function()
+		data.box.outline:Remove()
+		data.box.fill:Remove()
+		for _, l in ipairs(data.box.grad_lines) do l:Remove() end
+		for _, l in ipairs(data.box.fill_grad_lines) do l:Remove() end
+		for _, l in ipairs(data.box.corner_fill) do l:Remove() end
+		for _, l in ipairs(data.box.corner_outline) do l:Remove() end
+		for _, l in ipairs(data.box.box_3d_lines) do l:Remove() end
+		data.healthbar.background:Remove()
+		for _, s in ipairs(data.healthbar.segments) do s:Remove() end
+		data.healthtext:Remove()
+		data.name:Remove()
+		data.distance:Remove()
+		data.tracer.outline:Remove()
+		data.tracer.fill:Remove()
+		for _, l in ipairs(data.skeleton.lines) do l:Remove() end
+		data.weapon:Remove()
+		for _, l in ipairs(data.circle.lines) do l:Remove() end
+		for _, l in ipairs(data.circle.trail) do l:Remove() end
+		for _, l in ipairs(data.circle.glow) do l:Remove() end
+		if data.partConnAdd then data.partConnAdd:Disconnect() end
+		if data.partConnRemove then data.partConnRemove:Disconnect() end
+		if data.sizeConns then
+			for _, c in next, data.sizeConns do c:Disconnect() end
+		end
+	end)
+end
+
+local function hideAllESP(data)
+	hideBox(data.box)
+	data.healthbar.background.Visible = false
+	for _, s in ipairs(data.healthbar.segments) do s.Visible = false end
+	data.healthtext.Visible = false
+	data.name.Visible = false
+	data.distance.Visible = false
+	data.tracer.outline.Visible = false
+	data.tracer.fill.Visible = false
+	for _, l in ipairs(data.skeleton.lines) do l.Visible = false end
+	data.weapon.Visible = false
+	for _, l in ipairs(data.circle.lines) do l.Visible = false end
+	for _, l in ipairs(data.circle.trail) do l.Visible = false end
+	for _, l in ipairs(data.circle.glow) do l.Visible = false end
+end
+
+local function hasVestDetails(character)
+	local armor = character and character:FindFirstChild("CharacterArmor")
+	return armor ~= nil and armor:FindFirstChild("VestDetails") ~= nil
+end
+
+local function isAlly(character)
+	local myChar = LocalPlayer.Character
+	if not myChar or not character then return false end
+	return hasVestDetails(myChar) == hasVestDetails(character)
+end
+
+local weaponAttrCache, weaponNameCache = {}, {}
+local function getWeaponName(player)
+	if not player then return "None" end
+	local attr = player:GetAttribute("CurrentEquipped")
+	if attr ~= weaponAttrCache[player] then
+		weaponAttrCache[player] = attr
+		if attr then
+			local ok, decoded = pcall(function() return HttpService:JSONDecode(attr) end)
+			weaponNameCache[player] = (ok and decoded and decoded.Name) or "None"
+		else
+			weaponNameCache[player] = "None"
+		end
+	end
+	return weaponNameCache[player] or "None"
+end
+
+local function cachedScreenPos(cache, part)
+	local c = cache[part]
+	if c then return c[1], c[2] end
+	local camera = workspace.CurrentCamera
+	if not camera then return Vector2.new(), false end
+	local pos, vis = camera:WorldToViewportPoint(part.Position)
+	local sp = Vector2.new(pos.X, pos.Y)
+	cache[part] = { sp, vis }
+	return sp, vis
+end
+
+---------------------------------------------------------------------------
+-- ESP: отрисовка
+---------------------------------------------------------------------------
+bind(RunService.RenderStepped, function(dt)
+	if ESP.Box.FillRotation then
+		rotAngle = (rotAngle + dt * (ESP.Box.RotationSpeed or 2)) % pi2
+	end
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+	local camPos = camera.CFrame.Position
+	local viewport = camera.ViewportSize
+	local rotOff = rotAngle / pi2
+
+	for instance, data in next, espObjects do
+		if not instance or not instance.Parent then
+			removeESPObjects(instance)
+			continue
+		end
+		if instance == LocalPlayer.Character or not ESP.Enabled then
+			hideAllESP(data)
+			continue
+		end
+		if instance:IsA("Model") and not instance.PrimaryPart then
+			local head = instance:FindFirstChild("Head")
+			if head then
+				instance.PrimaryPart = head
+			end
+		end
+		if ESP.TeamCheck and isAlly(instance) then
+			hideAllESP(data)
+			continue
+		end
+		local healthAttr = instance:GetAttribute("Health")
+		local maxHealth = instance:GetAttribute("MaxHealth") or 100
+		if instance:GetAttribute("Dead") == true or (healthAttr and healthAttr <= 0) then
+			hideAllESP(data)
+			continue
+		end
+
+		local wantBox = ESP.Box.Enabled and ESP.Box.Type ~= "Disabled"
+		local wantHp = ESP.Health.Enabled
+		local wantHpTxt = ESP.HealthText.Enabled
+		local wantName = ESP.Name.Enabled
+		local wantDist = ESP.Distance.Enabled
+		local wantTracer = ESP.Tracer.Enabled
+		local wantSkel = ESP.Skeleton.Enabled
+		local wantWeapon = ESP.Weapon.Enabled
+		local wantCircle = ESP.Circle.Enabled
+
+		if not (wantBox or wantHp or wantHpTxt or wantName or wantDist or wantTracer or wantSkel or wantWeapon or wantCircle) then
+			hideAllESP(data)
+			continue
+		end
+
+		local parts = ensure_character_parts(instance, data)
+		local min2, max2, onscreen
+		local corners3d, on3d
+		local x0, y0, z0, x1, y1, z1 = compute_world_aabb(parts)
+		if x0 then
+			min2, max2, onscreen = project_fixed_box(x0, y0, z0, x1, y1, z1)
+			if wantBox and ESP.Box.Type == "3D" then
+				corners3d, on3d = project_aabb_corners_3d(x0, y0, z0, x1, y1, z1)
+			end
+		end
+
+		-- бокс
+		if not (wantBox and onscreen and min2 and max2) then
+			hideBox(data.box)
+		else
+			local x, y = min2.X, min2.Y
+			local w, h = max2.X - min2.X, max2.Y - min2.Y
+			local cA, cB = ESP.Box.ColorA, ESP.Box.ColorB
+			local boxType = ESP.Box.Type
+			if boxType == "2D" then
+				if ESP.Box.FillGradient then
+					drawFillGradient360(data.box.fill_grad_lines, x, y, w, h, ESP.Box.FillA, ESP.Box.FillB, rotAngle)
+				else
+					for _, l in ipairs(data.box.fill_grad_lines) do l.Visible = false end
+				end
+				drawBoxOutlineGradient(data.box, x, y, w, h, cA, cB, rotOff)
+				data.box.outline.Visible = false
+				data.box.fill.Visible = false
+				for _, l in ipairs(data.box.corner_fill) do l.Visible = false end
+				for _, l in ipairs(data.box.corner_outline) do l.Visible = false end
+				for _, l in ipairs(data.box.box_3d_lines) do l.Visible = false end
+			elseif boxType == "Corner" then
+				for _, l in ipairs(data.box.grad_lines) do l.Visible = false end
+				data.box.outline.Visible = false
+				data.box.fill.Visible = false
+				if ESP.Box.FillGradient then
+					drawFillGradient360(data.box.fill_grad_lines, x, y, w, h, ESP.Box.FillA, ESP.Box.FillB, rotAngle)
+				else
+					for _, l in ipairs(data.box.fill_grad_lines) do l.Visible = false end
+				end
+				local len = math.min(w, h) * 0.25
+				local corners = {
+					{ Vector2.new(x, y), Vector2.new(x + len, y) },
+					{ Vector2.new(x, y), Vector2.new(x, y + len) },
+					{ Vector2.new(x + w - len, y), Vector2.new(x + w, y) },
+					{ Vector2.new(x + w, y), Vector2.new(x + w, y + len) },
+					{ Vector2.new(x, y + h), Vector2.new(x + len, y + h) },
+					{ Vector2.new(x, y + h - len), Vector2.new(x, y + h) },
+					{ Vector2.new(x + w - len, y + h), Vector2.new(x + w, y + h) },
+					{ Vector2.new(x + w, y + h - len), Vector2.new(x + w, y + h) },
+				}
+				for i = 1, 8 do
+					local t = (i - 1) / 8
+					local col = lerpColor(cA, cB, t)
+					data.box.corner_outline[i].From = corners[i][1]
+					data.box.corner_outline[i].To = corners[i][2]
+					data.box.corner_outline[i].Color = C.BgTop
+					data.box.corner_outline[i].Visible = true
+					data.box.corner_fill[i].From = corners[i][1]
+					data.box.corner_fill[i].To = corners[i][2]
+					data.box.corner_fill[i].Color = col
+					data.box.corner_fill[i].Visible = true
+				end
+				for _, l in ipairs(data.box.box_3d_lines) do l.Visible = false end
+			elseif boxType == "3D" then
+				for _, l in ipairs(data.box.fill_grad_lines) do l.Visible = false end
+				for _, l in ipairs(data.box.grad_lines) do l.Visible = false end
+				data.box.outline.Visible = false
+				data.box.fill.Visible = false
+				for _, l in ipairs(data.box.corner_fill) do l.Visible = false end
+				for _, l in ipairs(data.box.corner_outline) do l.Visible = false end
+				if corners3d and #corners3d == 8 then
+					for i = 1, 12 do
+						local e = BOX_3D_EDGES[i]
+						data.box.box_3d_lines[i].From = corners3d[e[1]]
+						data.box.box_3d_lines[i].To = corners3d[e[2]]
+						data.box.box_3d_lines[i].Color = lerpColor(cA, cB, (i - 1) / 12)
+						data.box.box_3d_lines[i].Visible = on3d
+					end
+				else
+					for _, l in ipairs(data.box.box_3d_lines) do l.Visible = false end
+				end
+			end
+		end
+
+		-- хп бар
+		local bg = data.healthbar.background
+		local segs = data.healthbar.segments
+		if wantHp and onscreen and min2 and max2 and healthAttr then
+			local x = min2.X - 6
+			local y = min2.Y
+			local w = 3
+			local h = max2.Y - min2.Y
+			local maxHp = maxHealth > 0 and maxHealth or 100
+			local fraction = clamp(healthAttr / maxHp, 0, 1)
+			bg.Position = Vector2.new(x - 1, y - 1)
+			bg.Size = Vector2.new(w + 2, h + 2)
+			bg.Visible = true
+			local barHeight = h * fraction
+			local startY = y + (h - barHeight)
+			local active = clamp(floor(MAX_HP_SEGMENTS * fraction), 1, MAX_HP_SEGMENTS)
+			local segH = barHeight / active
+			for i = 1, MAX_HP_SEGMENTS do
+				local segLine = segs[i]
+				if i <= active then
+					segLine.Color = lerpColor(ESP.Health.Bottom, ESP.Health.Top, (i - 0.5) / MAX_HP_SEGMENTS)
+					local py1 = startY + (i - 1) * segH
+					local py2 = startY + i * segH
+					segLine.From = Vector2.new(x + w * 0.5, py1)
+					segLine.To = Vector2.new(x + w * 0.5, py2)
+					segLine.Thickness = w
+					segLine.Visible = true
+				else
+					segLine.Visible = false
+				end
+			end
+		else
+			bg.Visible = false
+			for _, s in ipairs(segs) do s.Visible = false end
+		end
+
+		-- хп текст
+		if wantHpTxt and onscreen and min2 and max2 and healthAttr then
+			local maxHp = maxHealth > 0 and maxHealth or 100
+			data.healthtext.Text = tostring(floor(healthAttr + 0.5))
+			data.healthtext.Size = ESP.HealthText.Size
+			data.healthtext.Color = ESP.HealthText.Color
+			data.healthtext.Position = Vector2.new(max2.X + 4, min2.Y + (max2.Y - min2.Y) * (1 - (healthAttr / maxHp)) - 4)
+			data.healthtext.Visible = true
+		else
+			data.healthtext.Visible = false
+		end
+
+		-- ник
+		if wantName and onscreen and min2 and max2 then
+			data.name.Text = instance.Name
+			data.name.Size = ESP.Name.Size
+			data.name.Color = ESP.Name.Color
+			data.name.Position = Vector2.new((min2.X + max2.X) * 0.5, min2.Y - 15)
+			data.name.Visible = true
+		else
+			data.name.Visible = false
+		end
+
+		-- дистанция
+		if wantDist and onscreen and min2 and max2 then
+			local dist = 999
+			if instance.PrimaryPart then
+				dist = (camPos - instance.PrimaryPart.Position).Magnitude
+			end
+			data.distance.Text = tostring(floor(dist)) .. "m"
+			data.distance.Size = ESP.Distance.Size
+			data.distance.Color = ESP.Distance.Color
+			data.distance.Position = Vector2.new((min2.X + max2.X) * 0.5, max2.Y + 2)
+			data.distance.Visible = true
+		else
+			data.distance.Visible = false
+		end
+
+		-- оружие
+		if wantWeapon and onscreen and min2 and max2 then
+			if not data.player then data.player = Players:GetPlayerFromCharacter(instance) end
+			local wn = data.player and getWeaponName(data.player) or "None"
+			data.weapon.Text = "[" .. wn .. "]"
+			data.weapon.Size = ESP.Weapon.Size
+			data.weapon.Color = ESP.Weapon.Color
+			data.weapon.Position = Vector2.new((min2.X + max2.X) * 0.5, max2.Y + 15)
+			data.weapon.Visible = true
+		else
+			data.weapon.Visible = false
+		end
+
+		-- трассер
+		if wantTracer and onscreen and min2 and max2 then
+			local from
+			if ESP.Tracer.From == "Mouse" then
+				local ml = UserInputService:GetMouseLocation()
+				from = Vector2.new(ml.X, ml.Y)
+			elseif ESP.Tracer.From == "Top" then
+				from = Vector2.new(viewport.X / 2, 0)
+			elseif ESP.Tracer.From == "Center" then
+				from = Vector2.new(viewport.X / 2, viewport.Y / 2)
+			else
+				from = Vector2.new(viewport.X / 2, viewport.Y)
+			end
+			local toPos = (min2 + max2) / 2
+			local distT = 0
+			if instance.PrimaryPart then
+				distT = clamp((camPos - instance.PrimaryPart.Position).Magnitude / 200, 0, 1)
+			end
+			local col = lerpColor(ESP.Tracer.ColorA, ESP.Tracer.ColorB, distT)
+			data.tracer.outline.From = from
+			data.tracer.outline.To = toPos
+			data.tracer.outline.Color = C.BgTop
+			data.tracer.outline.Visible = true
+			data.tracer.fill.From = from
+			data.tracer.fill.To = toPos
+			data.tracer.fill.Color = col
+			data.tracer.fill.Visible = true
+		else
+			data.tracer.outline.Visible = false
+			data.tracer.fill.Visible = false
+		end
+
+		-- скелет
+		if wantSkel then
+			local bp, lines, sc = data.skeleton.bone_parts, data.skeleton.lines, data.skeleton.screenCache
+			for k in next, sc do sc[k] = nil end
+			for i = 1, #bp do
+				local pA, pB = bp[i][1], bp[i][2]
+				local line = lines[i]
+				if pA and pB and pA.Parent and pB.Parent then
+					local posA, vA = cachedScreenPos(sc, pA)
+					local posB, vB = cachedScreenPos(sc, pB)
+					if vA or vB then
+						line.From = posA
+						line.To = posB
+						line.Color = lerpColor(ESP.Skeleton.ColorA, ESP.Skeleton.ColorB, (i - 1) / #bp)
+						line.Thickness = ESP.Skeleton.Thickness
+						line.Visible = true
+					else
+						line.Visible = false
+					end
+				else
+					line.Visible = false
+				end
+			end
+		else
+			for _, l in ipairs(data.skeleton.lines) do l.Visible = false end
+		end
+
+		-- кружок у земли
+		local ct = data.circle
+		local head = instance:FindFirstChild("Head")
+		local root = instance.PrimaryPart or instance:FindFirstChild("HumanoidRootPart")
+		if wantCircle and head and root then
+			local speed = 2
+			if ct.up then
+				ct.alpha = math.min(ct.alpha + dt * speed, 1)
+				if ct.alpha >= 1 then ct.up = false end
+			else
+				ct.alpha = math.max(ct.alpha - dt * speed, 0)
+				if ct.alpha <= 0 then ct.up = true end
+			end
+			local footPos = root.Position - Vector3.new(0, (root.Size.Y * 0.8) + 1.2, 0)
+			local headPos = head.Position + Vector3.new(0, 0.3, 0)
+			local worldPos = footPos:Lerp(headPos, ct.alpha)
+			table.insert(ct.history, 1, worldPos)
+			if #ct.history > #ct.trail then table.remove(ct.history) end
+			for i = 1, #ct.trail do
+				local p1, p2 = ct.history[i], ct.history[i + 1]
+				if p1 and p2 then
+					local s1, v1 = camera:WorldToViewportPoint(p1)
+					local s2, v2 = camera:WorldToViewportPoint(p2)
+					if v1 or v2 then
+						local fade = clamp(1 - (i / #ct.trail), 0.05, 1)
+						ct.glow[i].From = Vector2.new(s1.X, s1.Y)
+						ct.glow[i].To = Vector2.new(s2.X, s2.Y)
+						ct.glow[i].Color = ESP.Circle.Color
+						ct.glow[i].Transparency = fade * 0.35
+						ct.glow[i].Visible = true
+						ct.trail[i].From = Vector2.new(s1.X, s1.Y)
+						ct.trail[i].To = Vector2.new(s2.X, s2.Y)
+						ct.trail[i].Color = ESP.Circle.Color
+						ct.trail[i].Transparency = fade * 0.85
+						ct.trail[i].Visible = true
+					else
+						ct.trail[i].Visible = false
+						ct.glow[i].Visible = false
+					end
+				else
+					ct.trail[i].Visible = false
+					ct.glow[i].Visible = false
+				end
+			end
+			local R = 2.2
+			for i = 1, ct.segments do
+				local aA = pi2 * ((i - 1) / ct.segments)
+				local aB = pi2 * (i / ct.segments)
+				local wA = worldPos + Vector3.new(cos(aA) * R, 0, sin(aA) * R)
+				local wB = worldPos + Vector3.new(cos(aB) * R, 0, sin(aB) * R)
+				local sA, vA = camera:WorldToViewportPoint(wA)
+				local sB, vB = camera:WorldToViewportPoint(wB)
+				local line = ct.lines[i]
+				if vA or vB then
+					line.From = Vector2.new(sA.X, sA.Y)
+					line.To = Vector2.new(sB.X, sB.Y)
+					line.Color = ESP.Circle.Color
+					line.Visible = true
+				else
+					line.Visible = false
+				end
+			end
+		else
+			for _, l in ipairs(ct.lines) do l.Visible = false end
+			for _, l in ipairs(ct.trail) do l.Visible = false end
+			for _, l in ipairs(ct.glow) do l.Visible = false end
+		end
+	end
+end)
+
+---------------------------------------------------------------------------
+-- ESP: привязка к персонажам
+---------------------------------------------------------------------------
+local charactersFolder = workspace:FindFirstChild("Characters")
+if not charactersFolder then
+	task.spawn(function()
+		charactersFolder = workspace:WaitForChild("Characters", 30)
+	end)
+end
+
+local function addCharacter(character)
+	if not character or espCharacters[character] or character == LocalPlayer.Character then return end
+	if not (character:GetAttribute("Health") ~= nil or character:FindFirstChild("Head")) then return end
+	espCharacters[character] = true
+	addESPObjects(character)
+end
+
+local function removeCharacter(character)
+	if not character then return end
+	espCharacters[character] = nil
+	removeESPObjects(character)
+end
+
+local function scanCharacters()
+	if not charactersFolder then return end
+	for _, obj in ipairs(charactersFolder:GetDescendants()) do
+		if obj:IsA("Model") and obj:FindFirstChild("Head") then
+			addCharacter(obj)
+		end
+	end
+end
+
+task.spawn(function()
+	while not charactersFolder do task.wait(0.25) end
+	scanCharacters()
+	charactersFolder.DescendantAdded:Connect(function(desc)
+		if desc:IsA("Model") then
+			task.wait(0.1)
+			addCharacter(desc)
+		end
+	end)
+	charactersFolder.DescendantRemoving:Connect(function(desc)
+		if desc:IsA("Model") then removeCharacter(desc) end
+	end)
+	Players.PlayerRemoving:Connect(function(player)
+		if player.Character then removeCharacter(player.Character) end
+	end)
+	while true do
+		task.wait(2)
+		if ESP.Enabled then scanCharacters() end
+	end
+end)
+
+---------------------------------------------------------------------------
+-- ESP: UI
+---------------------------------------------------------------------------
+do
+	section(espPage, "Основное")
+	makeToggle(espPage, "Включить ESP", false, function(v)
+		ESP.Enabled = v
+		if v then
+			scanCharacters()
+			notify("ESP", "ESP включён")
+		else
+			for instance in next, espObjects do
+				local data = espObjects[instance]
+				if data then hideAllESP(data) end
+			end
+		end
+		Persist.queue()
+	end)
+	makeToggle(espPage, "Проверка на союзников", true, function(v)
+		ESP.TeamCheck = v
+		Persist.queue()
+	end)
+
+	section(espPage, "Бокс")
+	makeToggle(espPage, "Бокс", false, function(v) ESP.Box.Enabled = v end)
+	makeDropdown(espPage, "Тип бокса", { "2D", "3D", "Corner", "Disabled" }, "2D", function(v) ESP.Box.Type = v end)
+	makeColor(espPage, "Цвет A", ESP.Box.ColorA, function(c) ESP.Box.ColorA = c end)
+	makeColor(espPage, "Цвет B", ESP.Box.ColorB, function(c) ESP.Box.ColorB = c end)
+	makeToggle(espPage, "Заливка градиентом", false, function(v) ESP.Box.FillGradient = v end)
+	makeColor(espPage, "Заливка A", ESP.Box.FillA, function(c) ESP.Box.FillA = c end)
+	makeColor(espPage, "Заливка B", ESP.Box.FillB, function(c) ESP.Box.FillB = c end)
+	makeToggle(espPage, "Вращение заливки", false, function(v) ESP.Box.FillRotation = v end)
+	makeSlider(espPage, "Скорость вращения", 1, 10, 2, "x", function(v) ESP.Box.RotationSpeed = v end)
+
+	section(espPage, "Здоровье")
+	makeToggle(espPage, "Полоска HP", false, function(v) ESP.Health.Enabled = v end)
+	makeColor(espPage, "HP сверху", ESP.Health.Top, function(c) ESP.Health.Top = c end)
+	makeColor(espPage, "HP снизу", ESP.Health.Bottom, function(c) ESP.Health.Bottom = c end)
+	makeToggle(espPage, "Текст HP", false, function(v) ESP.HealthText.Enabled = v end)
+	makeColor(espPage, "Цвет текста HP", ESP.HealthText.Color, function(c) ESP.HealthText.Color = c end)
+	makeSlider(espPage, "Размер текста HP", 8, 24, 12, "px", function(v) ESP.HealthText.Size = v end)
+
+	section(espPage, "Информация")
+	makeToggle(espPage, "Ник", false, function(v) ESP.Name.Enabled = v end)
+	makeColor(espPage, "Цвет ника", ESP.Name.Color, function(c) ESP.Name.Color = c end)
+	makeSlider(espPage, "Размер ника", 8, 24, 13, "px", function(v) ESP.Name.Size = v end)
+	makeToggle(espPage, "Дистанция", false, function(v) ESP.Distance.Enabled = v end)
+	makeColor(espPage, "Цвет дистанции", ESP.Distance.Color, function(c) ESP.Distance.Color = c end)
+	makeSlider(espPage, "Размер дистанции", 8, 24, 13, "px", function(v) ESP.Distance.Size = v end)
+	makeToggle(espPage, "Оружие", false, function(v) ESP.Weapon.Enabled = v end)
+	makeColor(espPage, "Цвет оружия", ESP.Weapon.Color, function(c) ESP.Weapon.Color = c end)
+
+	section(espPage, "Трассер")
+	makeToggle(espPage, "Трассер", false, function(v) ESP.Tracer.Enabled = v end)
+	makeColor(espPage, "Трассер A", ESP.Tracer.ColorA, function(c) ESP.Tracer.ColorA = c end)
+	makeColor(espPage, "Трассер B", ESP.Tracer.ColorB, function(c) ESP.Tracer.ColorB = c end)
+	makeDropdown(espPage, "Начало трассера", { "Bottom", "Top", "Center", "Mouse" }, "Bottom", function(v) ESP.Tracer.From = v end)
+
+	section(espPage, "Скелет")
+	makeToggle(espPage, "Скелет", false, function(v) ESP.Skeleton.Enabled = v end)
+	makeColor(espPage, "Скелет A", ESP.Skeleton.ColorA, function(c) ESP.Skeleton.ColorA = c end)
+	makeColor(espPage, "Скелет B", ESP.Skeleton.ColorB, function(c) ESP.Skeleton.ColorB = c end)
+	makeSlider(espPage, "Толщина", 1, 6, 2, "px", function(v) ESP.Skeleton.Thickness = v end)
+
+	section(espPage, "Кружок цели")
+	makeToggle(espPage, "Кружок у земли", false, function(v) ESP.Circle.Enabled = v end)
+	makeColor(espPage, "Цвет кружка", ESP.Circle.Color, function(c) ESP.Circle.Color = c end)
+end
+
+---------------------------------------------------------------------------
 -- Skins: состояние и скинченджер
 ---------------------------------------------------------------------------
 local Skins = {
 	Root = nil,
-	Lists = {},          -- name -> { скины }   (статические списки)
-	Selections = {},     -- name -> выбранный скин (только строки)
+	Lists = {},
+	Selections = {},
 	GloveSelections = {},
 	GloveFolders = {},
 	Enabled = false,
@@ -1388,7 +2373,7 @@ do
 end
 
 ---------------------------------------------------------------------------
--- Конфиг: файловая система
+-- Конфиг
 ---------------------------------------------------------------------------
 local CONFIG_DIR = "KittenScript/BloxStrike"
 local CONFIG_FILE = CONFIG_DIR .. "/config.json"
@@ -1411,7 +2396,7 @@ local function collectConfig()
 		if type(sel) == "string" and sel ~= "" then gloves[glove] = sel end
 	end
 	return {
-		version = 3,
+		version = 4,
 		skins = {
 			enabled = Skins.Enabled,
 			knifeEnabled = Skins.KnifeEnabled,
@@ -1443,7 +2428,6 @@ local function saveConfig(silent)
 	return wrote
 end
 
--- принимает и строку, и (для старых конфигов) массив — берёт первый элемент
 local function coerceSkin(value, list)
 	if type(value) == "table" then value = value[1] end
 	if type(value) ~= "string" or value == "" then return nil end
@@ -1619,9 +2603,6 @@ bind(UserInputService.InputBegan, function(input, processed)
 	end
 end)
 
----------------------------------------------------------------------------
--- Автозагрузка конфига
----------------------------------------------------------------------------
 task.defer(function()
 	task.wait(0.4)
 	pcall(loadConfig, true)
@@ -1644,6 +2625,7 @@ function gui:Unload()
 	if viewmodelLib and Skins.Originals.ViewmodelNew then
 		viewmodelLib.new = Skins.Originals.ViewmodelNew
 	end
+	for instance in next, espObjects do removeESPObjects(instance) end
 	local camera = workspace.CurrentCamera
 	if camera and Fov.Original then camera.FieldOfView = Fov.Original end
 	for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
